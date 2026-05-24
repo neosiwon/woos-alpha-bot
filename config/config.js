@@ -36,7 +36,7 @@ module.exports = {
   VERIFY_LOG_FILE: process.env.WOOS_VERIFY_FILE || '/home/neosiwon/woos-alpha-bot/signals_log.csv',
   VERIFY_TRACK_FILE: process.env.WOOS_TRACK_FILE || '/home/neosiwon/woos-alpha-bot/tracking.json',
   EXCHANGE: 'upbit',
-  MAJORS: [],
+  MAJORS: ['USDT','USDC','DAI','BTC','ETH','XRP','SOL','DOGE','ADA','BNB','TRX'], // 제외: 스테이블3(USDT USDC DAI) + 완전대형8(BTC ETH XRP SOL DOGE ADA BNB TRX). 단타펌핑 구조적불가. config에서 인지/수정
   UPBIT_BATCH_SIZE: 5,
   UPBIT_BATCH_DELAY_MS: 1000,
   COLLECTOR_CSV_DIR: process.env.WOOS_CSV_DIR || '/home/neosiwon/woos_logs',
