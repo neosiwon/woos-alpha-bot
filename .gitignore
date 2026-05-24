@@ -142,3 +142,6 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
 state.json
+tracking.json
+signals_log.csv
+dominance.json
