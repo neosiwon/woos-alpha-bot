@@ -14,6 +14,15 @@ function fmtPrice(p) {
   return p.toFixed(2) + '원';
 }
 
+function fmtStrategy(s) {
+  const ep = cfg.EXIT_PARAMS;
+  const p = (s.regime === 'STRONG') ? ep.STRONG : ep.WEAK; // UNKNOWN=약세 보수
+  const w = (x) => Math.round(x * 100);
+  return '\n📋 손절: ' + ep.COMMON.STOP_PCT + '% (1차 익절 후 본절)'
+    + '\n익절: +' + p.TP1 + '%(' + w(p.W1) + '%)→+' + p.TP2 + '%(' + w(p.W2) + '%)→+' + p.TP3 + '%(' + w(p.W3) + '%)'
+    + '\n보유한계: ' + ep.COMMON.HOLD_HOURS + '시간';
+}
+
 function buildMsg(s) {
   return '🚨 알파 신호감지\n'
     + '종목: ' + (upbit.getKoreanName(s.symbol) ? upbit.getKoreanName(s.symbol) + '(' + s.symbol + ')' : s.symbol) + '\n'
@@ -23,7 +32,8 @@ function buildMsg(s) {
     + '수축: ' + fmtBox(s.boxPct) + '\n'
     + '체결강도: ' + s.execStrength.toFixed(1) + '%\n'
     + '중복: ' + (s.persistHits || 0) + '회 (10분 내)\n'
-    + '거래대금: ' + Math.round(s.tradeValue / 10000).toLocaleString() + '만';
+    + '거래대금: ' + Math.round(s.tradeValue / 10000).toLocaleString() + '만'
+    + fmtStrategy(s);
 }
 
 async function sendTelegram(signals) {

@@ -21,9 +21,9 @@ module.exports = {
     SWEET_MAX: 4.0
   },
   EXIT_PARAMS: {
-    COMMON: { STOP_PCT: -5 },
-    STRONG: { ACTIVATE_PCT: 3, ATR_MULT: 3, HOLD_HOURS: 12 },
-    WEAK: { ACTIVATE_PCT: 8, ATR_MULT: 2, HOLD_HOURS: 9 }
+    COMMON: { STOP_PCT: -5, HOLD_HOURS: 4 },
+    STRONG: { TP1: 7, TP2: 10, TP3: 12, W1: 0.50, W2: 0.30, W3: 0.20 },
+    WEAK:   { TP1: 7, TP2: 8,  TP3: 12, W1: 0.50, W2: 0.30, W3: 0.20 }
   },
   MARKET_REGIME: {
     STRONG: 'BTC.D down + USDT.D down',
@@ -36,7 +36,7 @@ module.exports = {
   VERIFY_LOG_FILE: process.env.WOOS_VERIFY_FILE || '/home/neosiwon/woos-alpha-bot/signals_log.csv',
   VERIFY_TRACK_FILE: process.env.WOOS_TRACK_FILE || '/home/neosiwon/woos-alpha-bot/tracking.json',
   EXCHANGE: 'upbit',
-  MAJORS: ['USDT','USDC','DAI','BTC','ETH','XRP','SOL','DOGE','ADA','BNB','TRX'], // 제외: 스테이블3(USDT USDC DAI) + 완전대형8(BTC ETH XRP SOL DOGE ADA BNB TRX). 단타펌핑 구조적불가. config에서 인지/수정
+  MAJORS: ['USDT','USDC','DAI','BTC','ETH','XRP','SOL','DOGE','ADA','BNB','TRX'],
   UPBIT_BATCH_SIZE: 5,
   UPBIT_BATCH_DELAY_MS: 1000,
   COLLECTOR_CSV_DIR: process.env.WOOS_CSV_DIR || '/home/neosiwon/woos_logs',
