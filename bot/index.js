@@ -4,10 +4,16 @@ const trigger = require('./trigger');
 const notify = require('./notify');
 const state = require('./state');
 const collector = require('./source/collector');
+const dominance = require('./dominance');
 
 async function tick() {
   const t = new Date().toISOString();
   console.log('\n[' + t + '] tick 시작');
+
+  // 0. 도미넌스 기록 (자가축적, 4h 후 강세/약세 판정)
+  await dominance.record();
+  const regime = dominance.judge();
+  console.log('[tick] 국면: ' + regime);
 
   // 1. 수축 후보 스캔
   const candidates = await scan.findCandidates();
@@ -22,6 +28,7 @@ async function tick() {
   if (!signals.length) { console.log('[tick] 신호 없음'); return; }
 
   // 4. 쿨다운 거르고 알림
+  signals.forEach(s => { s.regime = regime; });
   const fresh = signals.filter(s => !state.inCooldown(s.symbol));
   if (!fresh.length) { console.log('[tick] 신호 ' + signals.length + ' 전부 쿨다운'); return; }
 

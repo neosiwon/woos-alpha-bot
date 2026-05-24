@@ -17,6 +17,7 @@ function buildMsg(s) {
   return '🚨 알파 신호감지\n'
     + '종목: ' + s.symbol + '\n'
     + '거래소: 업비트\n'
+    + '국면: ' + (s.regime === 'STRONG' ? '강세' : s.regime === 'WEAK' ? '약세' : '판정중') + '\n'
     + '현재가: ' + fmtPrice(s.referencePrice) + '\n'
     + '수축: ' + fmtBox(s.boxPct) + '\n'
     + '체결강도: ' + s.execStrength.toFixed(1) + '%\n'

@@ -29,6 +29,9 @@ module.exports = {
     STRONG: 'BTC.D down + USDT.D down',
     WEAK: 'USDT.D up'
   },
+  REGIME_LOOKBACK_HOURS: 4,
+  REGIME_CHANGE_THRESHOLD: 0.3,
+  DOMINANCE_FILE: process.env.WOOS_DOM_FILE || '/home/neosiwon/woos-alpha-bot/dominance.json',
   EXCHANGE: 'upbit',
   MAJORS: [],
   UPBIT_BATCH_SIZE: 5,
