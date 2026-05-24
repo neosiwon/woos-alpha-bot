@@ -1,5 +1,6 @@
 const cfg = require('../../config/config');
 const BASE = 'https://api.upbit.com/v1';
+const koreanNames = {}; // 심볼 -> 한글명
 
 async function _get(url) {
   try {
@@ -26,6 +27,7 @@ async function fetchUniverse() {
   const all = await _get(`${BASE}/market/all?isDetails=false`);
   if (!Array.isArray(all)) return null;
   const majors = new Set(cfg.MAJORS);
+  all.forEach(m => { if (m.market && m.market.startsWith('KRW-')) koreanNames[m.market.slice(4)] = m.korean_name; });
   return all
     .filter(m => typeof m.market === 'string' && m.market.startsWith('KRW-'))
     .map(m => m.market.slice(4))
@@ -50,4 +52,5 @@ function calcBoxPct(candles) {
   return ((hi - lo) / lo) * 100;
 }
 
-module.exports = { fetchUniverse, fetchCandlesM5, calcBoxPct, _batchMap };
+function getKoreanName(sym) { return koreanNames[sym] || null; }
+module.exports = { fetchUniverse, fetchCandlesM5, calcBoxPct, _batchMap, getKoreanName };

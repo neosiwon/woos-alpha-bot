@@ -1,4 +1,5 @@
 const cfg = require('../config/config');
+const upbit = require('./exchange/upbit');
 
 function fmtBox(boxPct) {
   const s = cfg.SQUEEZE;
@@ -15,7 +16,7 @@ function fmtPrice(p) {
 
 function buildMsg(s) {
   return '🚨 알파 신호감지\n'
-    + '종목: ' + s.symbol + '\n'
+    + '종목: ' + (upbit.getKoreanName(s.symbol) ? upbit.getKoreanName(s.symbol) + '(' + s.symbol + ')' : s.symbol) + '\n'
     + '거래소: 업비트\n'
     + '국면: ' + (s.regime === 'STRONG' ? '강세' : s.regime === 'WEAK' ? '약세' : '판정중') + '\n'
     + '현재가: ' + fmtPrice(s.referencePrice) + '\n'
