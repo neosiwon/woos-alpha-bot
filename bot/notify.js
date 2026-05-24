@@ -6,10 +6,18 @@ function fmtBox(boxPct) {
   return boxPct.toFixed(2) + '%' + focus;
 }
 
+function fmtPrice(p) {
+  if (p == null) return '-';
+  if (p >= 100) return Math.round(p).toLocaleString() + '원';
+  if (p >= 1) return p.toFixed(1) + '원';
+  return p.toFixed(2) + '원';
+}
+
 function buildMsg(s) {
   return '🚨 알파 신호감지\n'
     + '종목: ' + s.symbol + '\n'
     + '거래소: 업비트\n'
+    + '현재가: ' + fmtPrice(s.referencePrice) + '\n'
     + '수축: ' + fmtBox(s.boxPct) + '\n'
     + '체결강도: ' + s.execStrength.toFixed(1) + '%\n'
     + '중복: ' + (s.persistHits || 0) + '회 (10분 내)\n'
