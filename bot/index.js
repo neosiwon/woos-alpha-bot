@@ -36,6 +36,10 @@ async function tick() {
 
   await notify.sendTelegram(fresh);
   for (const s of fresh) state.markNotified(s.symbol);
+  for (const sig of fresh) {
+    const c = await upbit.fetchCandlesM5(sig.symbol, 15);
+    sig.atr = c ? upbit.calcATR(c, 14) : null;
+  }
   verifier.register(fresh);
   console.log('[tick] 알림 ' + fresh.length + '건 발송');
 }

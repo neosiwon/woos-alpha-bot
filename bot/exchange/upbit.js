@@ -52,5 +52,20 @@ function calcBoxPct(candles) {
   return ((hi - lo) / lo) * 100;
 }
 
+// ATR (Average True Range) — 변동성. candles: [{high,low,close}], period 기본14
+function calcATR(candles, period) {
+  period = period || 14;
+  if (!Array.isArray(candles) || candles.length < period + 1) return null;
+  const trs = [];
+  for (let i = 1; i < candles.length; i++) {
+    const h = candles[i].high, l = candles[i].low, pc = candles[i-1].close;
+    const tr = Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc));
+    trs.push(tr);
+  }
+  const recent = trs.slice(-period);
+  if (recent.length < period) return null;
+  return recent.reduce((a,b) => a+b, 0) / period;
+}
+
 function getKoreanName(sym) { return koreanNames[sym] || null; }
-module.exports = { fetchUniverse, fetchCandlesM5, calcBoxPct, _batchMap, getKoreanName };
+module.exports = { fetchUniverse, fetchCandlesM5, calcBoxPct, _batchMap, getKoreanName, calcATR };
