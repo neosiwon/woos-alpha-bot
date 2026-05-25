@@ -50,14 +50,14 @@ function fmtSpike(spike, spikeTs) {
   if (spike == null) return '-';
   const eok = spike / 1e8;
   const t = spikeTs ? ' @' + String(spikeTs).slice(11, 16) : '';
-  // 장초반(업비트 9시 초기화 직후) 매집이면 ⏰ 표시 (config 시간대)
+  // 장초반(업비트 9시 초기화 직후) 매집이면 표시 (config 시간대, 7~11시 포함)
   let early = '';
   const sp = cfg.SPIKE || {};
   if (spikeTs && sp.EARLY_HOUR_START != null && sp.EARLY_HOUR_END != null) {
     const hh = parseInt(String(spikeTs).slice(11, 13), 10);
-    if (hh >= sp.EARLY_HOUR_START && hh < sp.EARLY_HOUR_END) early = ' ⏰장초반';
+    if (hh >= sp.EARLY_HOUR_START && hh <= sp.EARLY_HOUR_END) early = ' ⏰장초반';
   }
-  return eok.toFixed(2) + '억' + t + early + ' ⚡';
+  return eok.toFixed(2) + '억' + t + ' ⚡' + early;
 }
 
 function buildMsg(s) {
@@ -68,7 +68,7 @@ function buildMsg(s) {
     : '⚪ 판정중(약세기준)';
   return '🚨 매집신호 감지 (업비트)\n'
     + '─────────────\n'
-    + name + '\n'
+    + '▶' + name + '\n'
     + '매집 ' + fmtSpike(s.spike, s.spikeTs) + '\n'
     + '수축 ' + fmtBox(s.boxPct) + '\n'
     + '매도상태 ' + fmtSellState(s.sellState) + '\n'

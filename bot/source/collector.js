@@ -78,13 +78,22 @@ function getSpikes() {
     series[r.symbol].push({ min, ts: r.ts, net: r.buyKrw - r.sellKrw });
   }
   const out = {};
+  // 최근 N시간 기준 시각 = CSV 최신 시각(현재). 그 이전 (현재-N시간)보다 오래된 매집은 제외.
+  const maxAgeH = (cfg.SPIKE && cfg.SPIKE.MAX_AGE_HOURS) || 4;
+  let nowMin = 0;
+  for (const sym of Object.keys(series)) {
+    const last = series[sym][series[sym].length - 1];
+    if (last && last.min > nowMin) nowMin = last.min;
+  }
+  const minTs = nowMin - maxAgeH * 60; // 이 시각 이후 매집만 유효
   for (const sym of Object.keys(series)) {
     const arr = series[sym].sort((a, b) => a.min - b.min);
     let cumNet = 0;
     for (const x of arr) cumNet += x.net;
-    // 윈도우 슬라이딩 최대 순매수 (winMin<=1이면 단일 틱)
+    // 윈도우 슬라이딩 최대 순매수 (winMin<=1이면 단일 틱). 단 최근 N시간 이내 구간만.
     let spike = -Infinity, spikeTs = null;
     for (let i = 0; i < arr.length; i++) {
+      if (arr[i].min < minTs) continue; // 오래된 매집 제외 (스파이크 끝 시각 기준)
       let s = 0;
       for (let j = i; j >= 0 && (winMin <= 1 ? j === i : arr[i].min - arr[j].min < winMin); j--) s += arr[j].net;
       if (s > spike) { spike = s; spikeTs = arr[i].ts; }
