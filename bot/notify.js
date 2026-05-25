@@ -31,24 +31,19 @@ function fmtStrategy(s) {
     + '\n🎯 TP1 ' + fmtPrice(priceAt(e, p.TP1)) + ' → ' + w(p.W1) + '% 익절'
     + '\n🎯 TP2 ' + fmtPrice(priceAt(e, p.TP2)) + ' → ' + w(p.W2) + '% 익절'
     + '\n🎯 TP3 ' + fmtPrice(priceAt(e, p.TP3)) + ' → ' + w(p.W3) + '% 익절'
-    + '\n보유한계 ' + ep.COMMON.HOLD_HOURS + 'h (TP1 도달 시 손절→본절)';
+    + '\n보유한계 ' + ep.COMMON.HOLD_HOURS + 'H (TP1 도달 시 본절 STOP LOSS)';
 }
 
-// 신호 강도 — 매도상태 기준 (소진=발사임박=강). 임의 임계 없이 검증된 가설로 등급.
-function fmtGrade(sellState) {
-  return (sellState === 'DRY' || sellState === 'SELL_ONLY') ? '🔥 강' : '🟠 중';
-}
-
-// 매도상태 라벨 (추천안 — 검증중)
+// 매도상태 — 🔥 강한 마름(소진=발사임박 가설) / 🟠 보통 (검증중)
 function fmtSellState(s) {
   const map = {
-    DRY: '🔥 소진 임박',
-    SELL_ONLY: '🔥 소진 임박',
-    WEAK: '⏳ 대기 (매도 우위)',
-    NORMAL: '⏳ 대기',
-    NONE: '-',
+    DRY: '🔥 강한 마름 (소진 임박)',
+    SELL_ONLY: '🔥 강한 마름 (매도만 출회)',
+    WEAK: '🟠 보통 (매도 우위)',
+    NORMAL: '🟠 보통',
+    NONE: '🟠 보통',
   };
-  return map[s] || '-';
+  return map[s] || '🟠 보통';
 }
 
 function fmtSpike(spike, spikeTs) {
@@ -66,7 +61,7 @@ function buildMsg(s) {
     : '⚪ 판정중(약세기준)';
   return '🚨 매집신호 감지 (업비트)\n'
     + '─────────────\n'
-    + fmtGrade(s.sellState) + '  ' + name + '\n'
+    + name + '\n'
     + '매집 ' + fmtSpike(s.spike, s.spikeTs) + ' (순매수 스파이크)\n'
     + '수축 ' + fmtBox(s.boxPct) + '\n'
     + '매도상태 ' + fmtSellState(s.sellState) + '\n'
@@ -76,6 +71,7 @@ function buildMsg(s) {
 
 async function sendTelegram(signals) {
   if (!signals || !signals.length) return;
+  await upbit.ensureKoreanNames(); // 한글명 캐시 보장 (fetchUniverse 미호출 대비)
   const token = cfg.TELEGRAM_BOT_TOKEN;
   const chatId = cfg.TELEGRAM_CHAT_ID;
   if (!token || !chatId) {

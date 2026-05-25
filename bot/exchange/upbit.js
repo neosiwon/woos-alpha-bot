@@ -68,4 +68,16 @@ function calcATR(candles, period) {
 }
 
 function getKoreanName(sym) { return koreanNames[sym] || null; }
-module.exports = { fetchUniverse, fetchCandlesM5, calcBoxPct, _batchMap, getKoreanName, calcATR };
+
+// 한글명 캐시가 비어있으면 market/all 한 번 받아 채움 (fetchUniverse 미호출 대비).
+// 알람 직전 notify에서 호출 → 봇이 universe 안 받아도 한글명 보장.
+let _krFetched = false;
+async function ensureKoreanNames() {
+  if (_krFetched && Object.keys(koreanNames).length) return;
+  const all = await _get(`${BASE}/market/all?isDetails=false`);
+  if (Array.isArray(all)) {
+    all.forEach(m => { if (m.market && m.market.startsWith('KRW-')) koreanNames[m.market.slice(4)] = m.korean_name; });
+    _krFetched = true;
+  }
+}
+module.exports = { fetchUniverse, fetchCandlesM5, calcBoxPct, _batchMap, getKoreanName, ensureKoreanNames, calcATR };
