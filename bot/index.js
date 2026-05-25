@@ -19,10 +19,10 @@ async function tick() {
   const candidates = await scan.findCandidates();
   if (!candidates || !candidates.length) { console.log('[tick] 후보 없음 -> 다음'); return; }
 
+  // 체결강도 블록 = 매도소진 표시용 (없어도 신호는 발생 — 트리거 아님)
   const block = collector.getLatestExecBlock();
-  if (!block || !block.data) { console.log('[tick] 체결강도 없음 -> 다음'); return; }
 
-  const signals = trigger.evaluate(candidates, block, collector.getRecentSeries);
+  const signals = trigger.evaluate(candidates, block);
   if (!signals.length) { console.log('[tick] 신호 없음'); return; }
 
   signals.forEach(s => { s.regime = regime; });

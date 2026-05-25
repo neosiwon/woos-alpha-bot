@@ -33,6 +33,25 @@ function fmtStrategy(s) {
     + '\n보유한계: ' + ep.COMMON.HOLD_HOURS + '시간';
 }
 
+// 매도 소진 상태 라벨 (추천안 — 검증중, 발송조건 아님)
+function fmtSellState(s) {
+  const map = {
+    DRY: '🔥 매도 소진(마름)',
+    SELL_ONLY: '⚠️ 매도만 출회',
+    WEAK: '매도 우위',
+    NORMAL: '정상',
+    NONE: '-',
+  };
+  return map[s] || '-';
+}
+
+function fmtSpike(spike5m, spikeTs) {
+  if (spike5m == null) return '-';
+  const eok = spike5m / 1e8;
+  const t = spikeTs ? ' @' + String(spikeTs).slice(11, 16) : '';
+  return eok.toFixed(2) + '억' + t;
+}
+
 function buildMsg(s) {
   return '🚨 알파 신호감지\n'
     + '종목: ' + (upbit.getKoreanName(s.symbol) ? upbit.getKoreanName(s.symbol) + '(' + s.symbol + ')' : s.symbol) + '\n'
@@ -40,9 +59,9 @@ function buildMsg(s) {
     + '국면: ' + (s.regime === 'STRONG' ? '강세' : s.regime === 'WEAK' ? '약세' : '판정중(약세기준)') + '\n'
     + '현재가: ' + fmtPrice(s.referencePrice) + '\n'
     + '수축: ' + fmtBox(s.boxPct) + '\n'
-    + '체결강도: ' + s.execStrength.toFixed(1) + '%\n'
-    + '중복: ' + (s.persistHits || 0) + '회 (10분 내)\n'
-    + '거래대금: ' + Math.round(s.tradeValue / 10000).toLocaleString() + '만'
+    + '매집: ' + fmtSpike(s.spike5m, s.spikeTs) + ' (5분 순매수 최대)\n'
+    + '매도상태: ' + fmtSellState(s.sellState) + '\n'
+    + '거래대금: ' + (s.tradeValue != null ? Math.round(s.tradeValue / 10000).toLocaleString() + '만' : '-')
     + fmtStrategy(s);
 }
 

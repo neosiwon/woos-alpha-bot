@@ -1,70 +1,42 @@
 const cfg = require('../config/config');
-const A = cfg.ALPHA_TRIGGER;
 
-// 노이즈필터: 9999(매도0)는 매도액 조건에서 자동 탈락
-function passNoise(e) {
-  return e.trades >= A.MIN_TRADES
-    && e.sellKrw >= A.MIN_SELL_KRW
-    && e.tradeValue >= A.MIN_VALUE_KRW;
+// 매도 소진 상태 판정 (추천안 — 트리거 아님, 알림 표시/검증용).
+// 5/25 알파 3건 신호 직전 공통: 매도만(강도0) 연속 → 매도마름(9999) 전환.
+// 세력 발사 직전 "마지막 개미 털기 → 매도 소진" 가설. 표본 3건이라 박제 않고 measure.
+// 반환 라벨: 'DRY'(매도마름 9999) / 'SELL_ONLY'(매도만, 강도0) / 'WEAK'(매도우위 <100) / 'NORMAL' / 'NONE'
+function sellExhaustion(e) {
+  if (!e) return { label: 'NONE', execStrength: null };
+  const s = e.execStrength;
+  let label = 'NORMAL';
+  if (s >= 9999) label = 'DRY';                       // 매도 0 = 마름
+  else if (s === 0 && e.sellKrw > 0) label = 'SELL_ONLY'; // 매수0, 매도만
+  else if (s > 0 && s < 100) label = 'WEAK';          // 매도 우위
+  return { label, execStrength: s };
 }
 
-// 지속성: 최근 시퀀스 중 EXEC_STRENGTH_MIN 이상 횟수 → repeat/strong
-function persistence(series) {
-  if (!series) return { hits: 0, level: 'none' };
-  const hits = series.filter(x => x.execStrength >= A.EXEC_STRENGTH_MIN && x.execStrength < 9999).length;
-  let level = 'none';
-  if (hits >= A.PERSISTENCE_STRONG_HITS) level = 'strong_repeat';
-  else if (hits >= A.PERSISTENCE_MIN_HITS) level = 'repeat';
-  return { hits, level };
-}
-
-// candidates: [{symbol, boxPct, referencePrice}], execBlock: {sym:{...}}, getSeries: fn
-function evaluate(candidates, execBlock, getSeries) {
+// 신호 = scan 후보(매집 스파이크 상위 + 수축) 그 자체.
+// 체결강도 150 게이트 제거 — 5/25 검증: 알파 신호 시점 노이즈필터 통과 0건, 강도 0/9999 극단.
+// 150 트리거는 알파를 100% 막음 → 제거. 매집+수축이 곧 발사 대기 신호 (+5%상승 47%).
+// candidates: scan.findCandidates() 결과 [{symbol, boxPct, referencePrice, spike5m, spikeTs}]
+// execBlock: collector.getLatestExecBlock() (매도소진 표시용, 없어도 신호는 발생)
+function evaluate(candidates, execBlock) {
   if (!candidates || !candidates.length) { console.warn('[trigger] 후보 없음'); return []; }
-  if (!execBlock || !execBlock.data) { console.warn('[trigger] 체결강도 블록 없음 → 스킵'); return []; }
 
-  // 1. 후보 ∩ 체결강도 + 노이즈필터 통과 = 모집단
-  const pop = [];
-  for (const c of candidates) {
-    const e = execBlock.data[c.symbol];
-    if (!e) continue;                         // 0-0: 체결강도 없으면 스킵
-    if (e.execStrength >= 9999) continue;     // 9999(매도0) 제외 (노이즈필터로도 걸리지만 명시)
-    if (!passNoise(e)) continue;              // 노이즈필터 (얇은/죽은 종목 제외)
-    pop.push({ ...c, execStrength: e.execStrength, tradeValue: e.tradeValue });
-  }
-  if (!pop.length) { console.warn('[trigger] 모집단 0 (노이즈 통과 후보 없음)'); return []; }
-
-  // 2. 동적 상위 N% 임계 (모집단 충분할 때만)
-  let dynThreshold = null;
-  if (A.EXEC_USE_DYNAMIC && (A.MIN_POPULATION !== null && pop.length >= A.MIN_POPULATION)) {
-    const sorted = pop.map(p => p.execStrength).sort((a, b) => b - a);
-    const idx = Math.max(0, Math.floor(sorted.length * (A.EXEC_DYNAMIC_TOP_PCT / 100)) - 1);
-    dynThreshold = sorted[idx];
-  }
-  // MIN_POPULATION이 null이고 모집단 작으면 동적 못 믿음 → 절대값 fallback (위 조건이 처리)
-
-  // 3. 트리거: 절대값 AND (동적 있으면 동적도)
-  const signals = [];
-  for (const p of pop) {
-    if (p.execStrength < A.EXEC_STRENGTH_MIN) continue;          // 절대값 하한
-    if (dynThreshold !== null && p.execStrength < dynThreshold) continue; // 동적 상위%
-    const series = getSeries ? getSeries(p.symbol, A.PERSISTENCE_WINDOW) : null;
-    const pers = persistence(series);
-    signals.push({ ...p, persistence: pers.level, persistHits: pers.hits });
-  }
-
-  // 4. 정렬: strong_repeat 우선 → sweet(1.5~4%) 근접 → 체결강도
-  const sweetMid = (cfg.SQUEEZE.SWEET_MIN + cfg.SQUEEZE.SWEET_MAX) / 2;
-  signals.sort((a, b) => {
-    const lv = { strong_repeat: 2, repeat: 1, none: 0 };
-    if (lv[b.persistence] !== lv[a.persistence]) return lv[b.persistence] - lv[a.persistence];
-    const da = Math.abs(a.boxPct - sweetMid), db = Math.abs(b.boxPct - sweetMid);
-    if (da !== db) return da - db;
-    return b.execStrength - a.execStrength;
+  const signals = candidates.map(c => {
+    const e = execBlock && execBlock.data ? execBlock.data[c.symbol] : null;
+    const ex = sellExhaustion(e);
+    return {
+      ...c,
+      execStrength: ex.execStrength,   // 현재 체결강도 (표시용)
+      sellState: ex.label,             // 매도소진 라벨 (추천안 — 알림 별도 표시)
+    };
   });
 
-  console.log(`[trigger] 모집단 ${pop.length} / 동적임계 ${dynThreshold ?? '없음(절대값만)'} / 신호 ${signals.length}`);
+  // 매집 강도(spike5m) 순 — scan에서 이미 정렬됐지만 명시
+  signals.sort((a, b) => (b.spike5m || 0) - (a.spike5m || 0));
+  const dry = signals.filter(s => s.sellState === 'DRY' || s.sellState === 'SELL_ONLY').length;
+  console.log(`[trigger] 신호 ${signals.length} (매도소진상태 ${dry})`);
   return signals;
 }
 
-module.exports = { evaluate, passNoise, persistence };
+module.exports = { evaluate, sellExhaustion };

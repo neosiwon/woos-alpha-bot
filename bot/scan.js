@@ -1,26 +1,50 @@
 const cfg = require('../config/config');
 const upbit = require('./exchange/upbit');
+const collector = require('./source/collector');
 
-// 업비트 전체 스캔 -> 수축(박스폭 <= BOX_PCT_MAX) 통과분만 후보
+// 후보 선정 (A 구조 — 5/25 259종목 검증):
+//   1) 매집 감지: 5분 순매수 스파이크 상위 N (MAJORS 제외) — 세력 매집 종목
+//   2) 수축 확인: 그 중 박스폭 <= BOX_PCT_MAX — 매집의 동반 + 안전장치 + 발사 대기
+// 근거: 매집(스파이크상위)+수축 그룹 +5%상승 47% vs 죽은수축 7% (7배).
+//       순서 중요 — 수축 먼저 걸면 죽은 코인 다수. 매집 먼저 걸러야 함.
 async function findCandidates() {
-  const universe = await upbit.fetchUniverse();
-  if (!universe) { console.error('[scan] universe null -> 스킵'); return null; }
-  console.log('[scan] universe ' + universe.length + '종 스캔 시작');
+  // 1단계 — 매집 스파이크 (collector, CSV 기반)
+  const spikes = collector.getSpikes();
+  if (!spikes) { console.warn('[scan] 스파이크 없음 (CSV 미수집?) -> 스킵'); return null; }
 
+  const majors = new Set(cfg.MAJORS);
+  const ranked = Object.keys(spikes)
+    .filter(sym => !majors.has(sym))            // MAJORS(시총 대형 + XLM) 제외
+    .filter(sym => spikes[sym].spike5m > 0)     // 0-0: 순매수 스파이크 양(+)만 (매집)
+    .sort((a, b) => spikes[b].spike5m - spikes[a].spike5m)
+    .slice(0, cfg.SPIKE.TOP_N);                 // 상위 N개
+
+  if (!ranked.length) { console.warn('[scan] 매집 후보 0'); return null; }
+  console.log('[scan] 매집 스파이크 상위 ' + ranked.length + '종: ' + ranked.join(', '));
+
+  // 2단계 — 수축 확인 (업비트 캔들, 상위 N개만 조회 = 가벼움)
   const need = Math.ceil(cfg.SQUEEZE.LOOKBACK_MIN / 5); // 60분 / 5분 = 12개
   const candidates = [];
 
-  const results = await upbit._batchMap(universe, async (sym) => {
+  const results = await upbit._batchMap(ranked, async (sym) => {
     const candles = await upbit.fetchCandlesM5(sym, need);
-    if (!candles) return null;                       // 0-0: 캔들 부족 제외
+    if (!candles) return null;                          // 0-0: 캔들 부족 제외
     const boxPct = upbit.calcBoxPct(candles);
-    if (boxPct === null) return null;                // 0-0: 계산 불가 제외
-    if (boxPct > cfg.SQUEEZE.BOX_PCT_MAX) return null; // 수축 아님 제외
-    return { symbol: sym, boxPct, referencePrice: candles[candles.length - 1].close };
+    if (boxPct === null) return null;                   // 0-0: 계산 불가 제외
+    if (boxPct > cfg.SQUEEZE.BOX_PCT_MAX) return null;  // 수축 아님 제외
+    return {
+      symbol: sym,
+      boxPct,
+      referencePrice: candles[candles.length - 1].close,
+      spike5m: spikes[sym].spike5m,                     // 매집 강도 (알림 표시용)
+      spikeTs: spikes[sym].spikeTs,
+    };
   });
 
   for (const r of results) if (r) candidates.push(r);
-  console.log('[scan] 수축 통과 후보 ' + candidates.length + '종');
+  // 매집 강도순 정렬
+  candidates.sort((a, b) => b.spike5m - a.spike5m);
+  console.log('[scan] 매집+수축 통과 후보 ' + candidates.length + '종');
   return candidates;
 }
 
