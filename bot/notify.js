@@ -46,10 +46,11 @@ function fmtSellState(s) {
   return map[s] || '🟠 보통';
 }
 
-function fmtSpike(spike, spikeTs) {
+function fmtSpike(spike, spikeTs, rank) {
   if (spike == null) return '-';
   const eok = spike / 1e8;
   const t = spikeTs ? ' @' + String(spikeTs).slice(11, 16) : '';
+  const r = (rank != null) ? '#' + rank + ' ' : '';   // 매집 순위 (#1=최대)
   // 장초반(업비트 9시 초기화 직후) 매집이면 표시 (config 시간대, 7~11시 포함)
   let early = '';
   const sp = cfg.SPIKE || {};
@@ -57,7 +58,7 @@ function fmtSpike(spike, spikeTs) {
     const hh = parseInt(String(spikeTs).slice(11, 13), 10);
     if (hh >= sp.EARLY_HOUR_START && hh <= sp.EARLY_HOUR_END) early = ' ⏰장초반';
   }
-  return eok.toFixed(2) + '억' + t + ' ⚡' + early;
+  return r + eok.toFixed(2) + '억' + t + '⚡' + early;   // 번개는 시각 바로 뒤(여백 없이)
 }
 
 function buildMsg(s) {
@@ -69,7 +70,7 @@ function buildMsg(s) {
   return '🚨 매집신호 감지 (업비트)\n'
     + '─────────────\n'
     + '▶' + name + '\n'
-    + '매집 ' + fmtSpike(s.spike, s.spikeTs) + '\n'
+    + '매집 ' + fmtSpike(s.spike, s.spikeTs, s.rank) + '\n'
     + '수축 ' + fmtBox(s.boxPct) + '\n'
     + '매도상태 ' + fmtSellState(s.sellState) + '\n'
     + 'BTC ' + regimeStr + '\n'

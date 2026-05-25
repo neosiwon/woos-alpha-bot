@@ -46,6 +46,7 @@ async function findCandidates() {
       referencePrice: candles[candles.length - 1].close,
       spike: spikes[sym].spike,                         // 매집 강도 (알림 표시용)
       spikeTs: spikes[sym].spikeTs,
+      rank: positives.indexOf(sym) + 1,                 // 매집 스파이크 전체 순위 (#1=최대)
     };
   });
 
