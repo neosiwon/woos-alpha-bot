@@ -65,6 +65,7 @@ function buildMsg(s) {
     : s.regime === 'WEAK' ? '📉 약세'
     : '⚪ 판정중(약세기준)';
   return '🚨 매집신호 감지 (업비트)\n'
+    + '─────────────\n'
     + fmtGrade(s.sellState) + '  ' + name + '\n'
     + '매집 ' + fmtSpike(s.spike, s.spikeTs) + ' (순매수 스파이크)\n'
     + '수축 ' + fmtBox(s.boxPct) + '\n'
