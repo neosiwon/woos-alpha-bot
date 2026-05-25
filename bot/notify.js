@@ -51,9 +51,9 @@ function fmtSellState(s) {
   return map[s] || '-';
 }
 
-function fmtSpike(spike5m, spikeTs) {
-  if (spike5m == null) return '-';
-  const eok = spike5m / 1e8;
+function fmtSpike(spike, spikeTs) {
+  if (spike == null) return '-';
+  const eok = spike / 1e8;
   const t = spikeTs ? ' @' + String(spikeTs).slice(11, 16) : '';
   return eok.toFixed(2) + '억' + t;
 }
@@ -66,7 +66,7 @@ function buildMsg(s) {
     : '⚪ 판정중(약세기준)';
   return '🚨 매집신호 감지 (업비트)\n'
     + fmtGrade(s.sellState) + '  ' + name + '\n'
-    + '매집 ' + fmtSpike(s.spike5m, s.spikeTs) + ' (5분 순매수)\n'
+    + '매집 ' + fmtSpike(s.spike, s.spikeTs) + ' (순매수 스파이크)\n'
     + '수축 ' + fmtBox(s.boxPct) + '\n'
     + '매도상태 ' + fmtSellState(s.sellState) + '\n'
     + 'BTC ' + regimeStr + '\n'

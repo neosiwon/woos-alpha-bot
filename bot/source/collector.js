@@ -59,16 +59,15 @@ function _tsToMinutes(ts) {
   return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
 }
 
-// 매집 스파이크 측정 — 검증 결과: "5분 슬라이딩 최대 순매수"가 매집을 가르는 핵심 지표.
-// (당일 누적/비율/배율은 변별력 없음으로 기각. 5분 스파이크 상위 = 세력 매집 종목.)
-// 반환: { symbol: { spike5m, spikeTs, cumNet } }
-//   spike5m = 그날 어느 5분 구간의 최대 순매수 합 (매집 강도). spikeTs = 그 구간 끝 시각.
-//   cumNet = 당일 누적 순매수 (참고용 — 주력 아님).
-// 윈도우는 config.SQUEEZE.LOOKBACK_MIN 등과 무관한 고정 5분 (매집 펄스 단위, 검증값).
-const SPIKE_WINDOW_MIN = 5;
+// 매집 스파이크 측정 — 5/25 알파 역산: 1틱(config.SPIKE.WINDOW_MIN) 순매수 스파이크가 핵심.
+// (누적/비율/배율 기각. 5분은 노이즈 부풀림. 1틱이 진짜/노이즈 분리 최고.)
+// 반환: { symbol: { spike, spikeTs, cumNet } }
+//   spike = WINDOW_MIN 구간 최대 순매수 합 (매집 강도). spikeTs = 그 구간 끝 시각.
+//   cumNet = 당일 누적 순매수 (참고용).
 function getSpikes() {
   const rows = _readAllRows();
   if (!rows) return null;
+  const winMin = (cfg.SPIKE && cfg.SPIKE.WINDOW_MIN) || 1; // config에서 윈도우 (1=1틱)
   // 종목별 시계열 (시간순)
   const series = {};
   for (const r of rows) {
@@ -83,15 +82,15 @@ function getSpikes() {
     const arr = series[sym].sort((a, b) => a.min - b.min);
     let cumNet = 0;
     for (const x of arr) cumNet += x.net;
-    // 5분 슬라이딩 최대 순매수
-    let spike5m = -Infinity, spikeTs = null;
+    // 윈도우 슬라이딩 최대 순매수 (winMin<=1이면 단일 틱)
+    let spike = -Infinity, spikeTs = null;
     for (let i = 0; i < arr.length; i++) {
       let s = 0;
-      for (let j = i; j >= 0 && arr[i].min - arr[j].min < SPIKE_WINDOW_MIN; j--) s += arr[j].net;
-      if (s > spike5m) { spike5m = s; spikeTs = arr[i].ts; }
+      for (let j = i; j >= 0 && (winMin <= 1 ? j === i : arr[i].min - arr[j].min < winMin); j--) s += arr[j].net;
+      if (s > spike) { spike = s; spikeTs = arr[i].ts; }
     }
-    if (spike5m === -Infinity) continue;
-    out[sym] = { spike5m, spikeTs, cumNet };
+    if (spike === -Infinity) continue;
+    out[sym] = { spike, spikeTs, cumNet };
   }
   return Object.keys(out).length ? out : null;
 }

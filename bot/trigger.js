@@ -17,7 +17,7 @@ function sellExhaustion(e) {
 // 신호 = scan 후보(매집 스파이크 상위 + 수축) 그 자체.
 // 체결강도 150 게이트 제거 — 5/25 검증: 알파 신호 시점 노이즈필터 통과 0건, 강도 0/9999 극단.
 // 150 트리거는 알파를 100% 막음 → 제거. 매집+수축이 곧 발사 대기 신호 (+5%상승 47%).
-// candidates: scan.findCandidates() 결과 [{symbol, boxPct, referencePrice, spike5m, spikeTs}]
+// candidates: scan.findCandidates() 결과 [{symbol, boxPct, referencePrice, spike, spikeTs}]
 // execBlock: collector.getLatestExecBlock() (매도소진 표시용, 없어도 신호는 발생)
 function evaluate(candidates, execBlock) {
   if (!candidates || !candidates.length) { console.warn('[trigger] 후보 없음'); return []; }
@@ -32,8 +32,8 @@ function evaluate(candidates, execBlock) {
     };
   });
 
-  // 매집 강도(spike5m) 순 — scan에서 이미 정렬됐지만 명시
-  signals.sort((a, b) => (b.spike5m || 0) - (a.spike5m || 0));
+  // 매집 강도(spike) 순 — scan에서 이미 정렬됐지만 명시
+  signals.sort((a, b) => (b.spike || 0) - (a.spike || 0));
   const dry = signals.filter(s => s.sellState === 'DRY' || s.sellState === 'SELL_ONLY').length;
   console.log(`[trigger] 신호 ${signals.length} (매도소진상태 ${dry})`);
   return signals;
