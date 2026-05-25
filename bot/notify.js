@@ -25,21 +25,27 @@ function fmtStrategy(s) {
   const p = (s.regime === 'STRONG') ? ep.STRONG : ep.WEAK; // UNKNOWN=약세 보수
   const e = s.referencePrice;
   const w = (x) => Math.round(x * 100);
-  return '\n📋 진입가: ' + fmtPrice(e)
-    + '\n손절: ' + fmtPrice(priceAt(e, ep.COMMON.STOP_PCT)) + ' (' + ep.COMMON.STOP_PCT + '%, 1차익절 후 본절)'
-    + '\n익절1: ' + fmtPrice(priceAt(e, p.TP1)) + ' (+' + p.TP1 + '%, ' + w(p.W1) + '%)'
-    + '\n익절2: ' + fmtPrice(priceAt(e, p.TP2)) + ' (+' + p.TP2 + '%, ' + w(p.W2) + '%)'
-    + '\n익절3: ' + fmtPrice(priceAt(e, p.TP3)) + ' (+' + p.TP3 + '%, ' + w(p.W3) + '%)'
-    + '\n보유한계: ' + ep.COMMON.HOLD_HOURS + '시간';
+  return '─────────────'
+    + '\n📋 현재가 ' + fmtPrice(e)
+    + '\n🛑 손절 ' + fmtPrice(priceAt(e, ep.COMMON.STOP_PCT)) + ' (' + ep.COMMON.STOP_PCT + '%)'
+    + '\n🎯 TP1 ' + fmtPrice(priceAt(e, p.TP1)) + ' → ' + w(p.W1) + '% 익절'
+    + '\n🎯 TP2 ' + fmtPrice(priceAt(e, p.TP2)) + ' → ' + w(p.W2) + '% 익절'
+    + '\n🎯 TP3 ' + fmtPrice(priceAt(e, p.TP3)) + ' → ' + w(p.W3) + '% 익절'
+    + '\n▶ 보유한계 ' + ep.COMMON.HOLD_HOURS + 'h (TP1 도달 시 손절→본절)';
 }
 
-// 매도 소진 상태 라벨 (추천안 — 검증중, 발송조건 아님)
+// 신호 강도 — 매도상태 기준 (소진=발사임박=강). 임의 임계 없이 검증된 가설로 등급.
+function fmtGrade(sellState) {
+  return (sellState === 'DRY' || sellState === 'SELL_ONLY') ? '🔥 강' : '🟠 중';
+}
+
+// 매도상태 라벨 (추천안 — 검증중)
 function fmtSellState(s) {
   const map = {
-    DRY: '🔥 매도 소진(마름)',
-    SELL_ONLY: '⚠️ 매도만 출회',
-    WEAK: '매도 우위',
-    NORMAL: '정상',
+    DRY: '🔥 소진 임박',
+    SELL_ONLY: '🔥 소진 임박',
+    WEAK: '⏳ 대기 (매도 우위)',
+    NORMAL: '⏳ 대기',
     NONE: '-',
   };
   return map[s] || '-';
@@ -53,15 +59,18 @@ function fmtSpike(spike5m, spikeTs) {
 }
 
 function buildMsg(s) {
-  return '🚨 알파 신호감지\n'
-    + '종목: ' + (upbit.getKoreanName(s.symbol) ? upbit.getKoreanName(s.symbol) + '(' + s.symbol + ')' : s.symbol) + '\n'
-    + '거래소: 업비트\n'
-    + '국면: ' + (s.regime === 'STRONG' ? '강세' : s.regime === 'WEAK' ? '약세' : '판정중(약세기준)') + '\n'
-    + '현재가: ' + fmtPrice(s.referencePrice) + '\n'
-    + '수축: ' + fmtBox(s.boxPct) + '\n'
-    + '매집: ' + fmtSpike(s.spike5m, s.spikeTs) + ' (5분 순매수 최대)\n'
-    + '매도상태: ' + fmtSellState(s.sellState) + '\n'
-    + '거래대금: ' + (s.tradeValue != null ? Math.round(s.tradeValue / 10000).toLocaleString() + '만' : '-')
+  const name = upbit.getKoreanName(s.symbol)
+    ? upbit.getKoreanName(s.symbol) + '(' + s.symbol + ')'
+    : s.symbol;
+  const regimeStr = s.regime === 'STRONG' ? '📈 강세'
+    : s.regime === 'WEAK' ? '📉 약세'
+    : '⚪ 판정중(약세기준)';
+  return '🚨 매집신호 감지 (업비트)\n'
+    + '[' + fmtGrade(s.sellState) + '] ' + name + '\n'
+    + '▶ 매집 ' + fmtSpike(s.spike5m, s.spikeTs) + ' (5분 순매수)\n'
+    + '▶ 수축 ' + fmtBox(s.boxPct) + '\n'
+    + '▶ 매도상태: ' + fmtSellState(s.sellState) + '\n'
+    + '▶ BTC: ' + regimeStr + '\n'
     + fmtStrategy(s);
 }
 
