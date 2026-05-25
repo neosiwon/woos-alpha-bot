@@ -6,6 +6,7 @@ const state = require('./state');
 const collector = require('./source/collector');
 const dominance = require('./dominance');
 const verifier = require('./verifier');
+const report = require('./report');
 
 async function tick() {
   const t = new Date().toISOString();
@@ -14,6 +15,7 @@ async function tick() {
   await dominance.record();
   const regime = dominance.judge();
   await verifier.update();
+  await report.maybeSendDaily();
   console.log('[tick] 국면: ' + regime);
 
   const candidates = await scan.findCandidates();

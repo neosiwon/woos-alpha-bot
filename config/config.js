@@ -55,6 +55,9 @@ module.exports = {
   VERIFY_HOURS: 4,
   VERIFY_LOG_FILE: process.env.WOOS_VERIFY_FILE || '/home/neosiwon/woos-alpha-bot/signals_log.csv',
   VERIFY_TRACK_FILE: process.env.WOOS_TRACK_FILE || '/home/neosiwon/woos-alpha-bot/tracking.json',
+  // 일일 성적표 — 매일 정해진 시각(KST)에 전 24시간 signals_log 집계해 텔레그램 발송.
+  DAILY_REPORT_HOUR: 9,   // 발송 시각(KST, 업비트 초기화 시점). null이면 비활성
+  REPORT_STATE_FILE: process.env.WOOS_REPORT_FILE || '/home/neosiwon/woos-alpha-bot/report_state.json',
   EXCHANGE: 'upbit',
   // 제외 명단 (스캔/신호 제외) — 시총 ADA 이상 대형 + 수동 추가. 단타 펌핑 구조 불가.
   // 스테이블3 / 대형8(시총 ADA 12.5조 이상) / XLM(7.1조, 5/25 노이즈로 상위 떠서 수동 추가)
