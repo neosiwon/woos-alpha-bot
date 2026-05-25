@@ -31,7 +31,7 @@ function fmtStrategy(s) {
     + '\n🎯 TP1 ' + fmtPrice(priceAt(e, p.TP1)) + ' → ' + w(p.W1) + '% 익절'
     + '\n🎯 TP2 ' + fmtPrice(priceAt(e, p.TP2)) + ' → ' + w(p.W2) + '% 익절'
     + '\n🎯 TP3 ' + fmtPrice(priceAt(e, p.TP3)) + ' → ' + w(p.W3) + '% 익절'
-    + '\n▶ 보유한계 ' + ep.COMMON.HOLD_HOURS + 'h (TP1 도달 시 손절→본절)';
+    + '\n보유한계 ' + ep.COMMON.HOLD_HOURS + 'h (TP1 도달 시 손절→본절)';
 }
 
 // 신호 강도 — 매도상태 기준 (소진=발사임박=강). 임의 임계 없이 검증된 가설로 등급.
@@ -59,18 +59,17 @@ function fmtSpike(spike5m, spikeTs) {
 }
 
 function buildMsg(s) {
-  const name = upbit.getKoreanName(s.symbol)
-    ? upbit.getKoreanName(s.symbol) + '(' + s.symbol + ')'
-    : s.symbol;
+  const kor = upbit.getKoreanName(s.symbol);
+  const name = kor ? kor + ' [' + s.symbol + ']' : '[' + s.symbol + ']';
   const regimeStr = s.regime === 'STRONG' ? '📈 강세'
     : s.regime === 'WEAK' ? '📉 약세'
     : '⚪ 판정중(약세기준)';
   return '🚨 매집신호 감지 (업비트)\n'
-    + '[' + fmtGrade(s.sellState) + '] ' + name + '\n'
-    + '▶ 매집 ' + fmtSpike(s.spike5m, s.spikeTs) + ' (5분 순매수)\n'
-    + '▶ 수축 ' + fmtBox(s.boxPct) + '\n'
-    + '▶ 매도상태: ' + fmtSellState(s.sellState) + '\n'
-    + '▶ BTC: ' + regimeStr + '\n'
+    + fmtGrade(s.sellState) + '  ' + name + '\n'
+    + '매집 ' + fmtSpike(s.spike5m, s.spikeTs) + ' (5분 순매수)\n'
+    + '수축 ' + fmtBox(s.boxPct) + '\n'
+    + '매도상태 ' + fmtSellState(s.sellState) + '\n'
+    + 'BTC ' + regimeStr + '\n'
     + fmtStrategy(s);
 }
 
