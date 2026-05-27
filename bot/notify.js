@@ -49,18 +49,22 @@ async function _send(chatId, text) {
     const r = await fetch('https://api.telegram.org/bot' + cfg.TELEGRAM_BOT_TOKEN + '/sendMessage', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true }),
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true }),
     });
     if (!r.ok) console.error('[notify] telegram fail ' + r.status);
   } catch (e) { console.error('[notify] send error: ' + e.message); }
 }
 
-// 두 채널 ID 결정 (fallback)
-function _privateChat() {
-  return cfg.TELEGRAM_CHAT_ID_PRIVATE || cfg.TELEGRAM_CHAT_ID;
+// 채널 분기:
+//   2차 + 3차 → MONITOR (없으면 PRIVATE/CHAT_ID fallback)
+//   3차만   → GROUP (단톡, 없으면 MONITOR 와 통합)
+function _monitorChat() {
+  return cfg.TELEGRAM_CHAT_ID_MONITOR
+      || cfg.TELEGRAM_CHAT_ID_PRIVATE
+      || cfg.TELEGRAM_CHAT_ID;
 }
 function _groupChat() {
-  return cfg.TELEGRAM_CHAT_ID_GROUP || _privateChat();
+  return cfg.TELEGRAM_CHAT_ID_GROUP || null;
 }
 
 // === 2차 알람 (감시 등록 — PRIVATE only) ===
@@ -88,7 +92,7 @@ async function sendStage2(candidates, regime) {
   await upbit.ensureKoreanNames();
   const now = Date.now();
   const cdMs = (cfg.STAGE2_COOLDOWN_MIN || 60) * 60 * 1000;
-  const chatId = _privateChat();
+  const chatId = _monitorChat();
   let sent = 0;
   for (const c of candidates) {
     const last = _stage2Cache[c.symbol] || 0;
@@ -109,41 +113,45 @@ function _build3(s) {
   const tp2  = buy * (1 + E.TP2_PCT / 100);
   const tp3  = buy * (1 + E.TP3_PCT / 100);
   const sign = (n) => n >= 0 ? '+' : '';
+  const wallLine = s.wallRatioPct != null
+    ? `• 매도벽 ${s.wallRatioPct.toFixed(2)}% (참고)`
+    : null;
   return [
-    '🚨매수 신호 (업비트)',
+    '🚨 매수 신호 (업비트)',
     '─────────────',
-    '▶' + _name(s.symbol),
-    `🔥 평단 진입 ${sign(s.distNow)}${s.distNow.toFixed(2)}% (점화)`,
-    `📢매수추천가 >${fmtPrice(buy)}<`,
+    `▶ 코인명 : <b>${_name(s.symbol)}</b>`,
     '',
-    `흡수 거래 ${s.surge.toFixed(1)}배↑ / 가격 ${s.range.toFixed(1)}%`,
-    `박스 상단 +${s.toTopPct.toFixed(1)}% (저항 얇음)`,
-    _wallStr(s.wallRatioPct).trimEnd(),
-    `24h 평단 ${fmtPrice(s.vwap)}`,
-    _regimeStr(s.regime),
+    `━━ 🔥 <b>매수가 ${fmtPrice(buy)}</b> 🔥 ━━`,
+    '',
+    `• 평단 진입 ${sign(s.distNow)}${s.distNow.toFixed(2)}% (점화)`,
+    `• 매집진행 거래 ${s.surge.toFixed(1)}배↑ / 가격 ${s.range.toFixed(1)}%`,
+    `• 박스 상단 +${s.toTopPct.toFixed(1)}% (저항 얇음)`,
+    wallLine,
+    `• ${_regimeStr(s.regime)}`,
     '─────────────',
-    `📋 매수가 ${fmtPrice(buy)} 부근`,
-    `🛑 손절 ${fmtPrice(stop)} (${E.STOP_PCT}%)`,
+    `🛑 손절가 ${fmtPrice(stop)} (${E.STOP_PCT}%)`,
+    '',
     `🎯 TP1 ${fmtPrice(tp1)} (+${E.TP1_PCT}%) → ${E.TP1_WEIGHT * 100}%`,
     `🎯 TP2 ${fmtPrice(tp2)} (+${E.TP2_PCT}%) → ${E.TP2_WEIGHT * 100}%`,
     `🎯 TP3 ${fmtPrice(tp3)} (+${E.TP3_PCT}%) → ${E.TP3_WEIGHT * 100}%`,
-    `보유한계 ${E.HOLD_HOURS}H (TP1 도달 시 본절)`,
-  ].filter(l => l !== '').join('\n');
+    `• 보유한계 ${E.HOLD_HOURS}H (TP1 도달 시 본절)`,
+  ].filter(l => l != null).join('\n');
 }
 
 // 기존 호환: sendTelegram(signals) — 3차 알람 (PRIVATE + GROUP)
 async function sendTelegram(signals) {
   if (!signals || !signals.length) return;
   await upbit.ensureKoreanNames();
-  const privateChat = _privateChat();
+  const monitorChat = _monitorChat();
   const groupChat = _groupChat();
-  const groupSame = (groupChat === privateChat);
   for (const s of signals) {
     const text = _build3(s);
-    await _send(privateChat, text);
-    if (!groupSame) await _send(groupChat, text);
+    await _send(monitorChat, text);
+    // 단톡 GROUP 이 설정돼있고 MONITOR 와 다르면 추가 발송
+    if (groupChat && groupChat !== monitorChat) {
+      await _send(groupChat, text);
+    }
   }
 }
 
 module.exports = { sendTelegram, sendStage2 };
-

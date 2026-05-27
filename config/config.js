@@ -68,6 +68,7 @@ module.exports = {
   TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID || null,                       // 기존 호환
   TELEGRAM_CHAT_ID_PRIVATE: process.env.TELEGRAM_CHAT_ID_PRIVATE || null,
   TELEGRAM_CHAT_ID_GROUP: process.env.TELEGRAM_CHAT_ID_GROUP || null,
+  TELEGRAM_CHAT_ID_MONITOR: process.env.TELEGRAM_CHAT_ID_MONITOR || null,
 
   // ── 신호 쿨다운 ──────────────────────────────────────────────────
   SIGNAL_COOLDOWN_MIN: 30,        // 3차 발사 알람 쿨다운
@@ -98,4 +99,3 @@ module.exports = {
   },
   DEAD_COIN_MIN_24H_KRW: null,
 };
-
