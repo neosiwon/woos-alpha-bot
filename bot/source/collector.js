@@ -1,3 +1,6 @@
+// bot/source/collector.js — CSV 수집기 (거래 + 호가)
+// v3 변경: getSpikes 폐기 → detectAbsorption 추가. 기존 메서드는 호환을 위해 유지.
+
 const fs = require('fs');
 const path = require('path');
 const cfg = require('../../config/config');
@@ -10,12 +13,12 @@ function _todayKST() {
   return `${y}${m}${d}`;
 }
 
-function _csvPath() {
-  return path.join(cfg.COLLECTOR_CSV_DIR, `${cfg.COLLECTOR_CSV_PREFIX}${_todayKST()}.csv`);
-}
+function _tradePath()    { return path.join(cfg.COLLECTOR_CSV_DIR, `${cfg.COLLECTOR_CSV_PREFIX}${_todayKST()}.csv`); }
+function _orderbookPath(){ return path.join(cfg.COLLECTOR_CSV_DIR, `${cfg.ORDERBOOK_CSV_PREFIX}${_todayKST()}.csv`); }
 
+// 거래 CSV 전체 행 파싱 — 기존 유지
 function _readAllRows() {
-  const p = _csvPath();
+  const p = _tradePath();
   if (!fs.existsSync(p)) { console.warn(`[collector] no CSV: ${p}`); return null; }
   let txt;
   try { txt = fs.readFileSync(p, 'utf8'); }
@@ -38,6 +41,7 @@ function _readAllRows() {
   return rows.length ? rows : null;
 }
 
+// 최근 한 틱(같은 ts)의 종목별 체결강도 블록 — 기존 유지 (index.js에서 호출)
 function getLatestExecBlock() {
   const rows = _readAllRows();
   if (!rows) return null;
@@ -52,58 +56,7 @@ function getLatestExecBlock() {
   return { ts: latestTs, data: Object.keys(block).length ? block : null };
 }
 
-// ts("2026-05-25 08:50:05") → 그날 자정 기준 경과 분(минute). 파싱 실패 시 null.
-function _tsToMinutes(ts) {
-  const m = /(\d{2}):(\d{2}):/.exec(ts);
-  if (!m) return null;
-  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-}
-
-// 매집 스파이크 측정 — 5/25 알파 역산: 1틱(config.SPIKE.WINDOW_MIN) 순매수 스파이크가 핵심.
-// (누적/비율/배율 기각. 5분은 노이즈 부풀림. 1틱이 진짜/노이즈 분리 최고.)
-// 반환: { symbol: { spike, spikeTs, cumNet } }
-//   spike = WINDOW_MIN 구간 최대 순매수 합 (매집 강도). spikeTs = 그 구간 끝 시각.
-//   cumNet = 당일 누적 순매수 (참고용).
-function getSpikes() {
-  const rows = _readAllRows();
-  if (!rows) return null;
-  const winMin = (cfg.SPIKE && cfg.SPIKE.WINDOW_MIN) || 1; // config에서 윈도우 (1=1틱)
-  // 종목별 시계열 (시간순)
-  const series = {};
-  for (const r of rows) {
-    if (!Number.isFinite(r.buyKrw) || !Number.isFinite(r.sellKrw)) continue; // 0-0
-    const min = _tsToMinutes(r.ts);
-    if (min === null) continue;
-    if (!series[r.symbol]) series[r.symbol] = [];
-    series[r.symbol].push({ min, ts: r.ts, net: r.buyKrw - r.sellKrw });
-  }
-  const out = {};
-  // 최근 N시간 기준 시각 = CSV 최신 시각(현재). 그 이전 (현재-N시간)보다 오래된 매집은 제외.
-  const maxAgeH = (cfg.SPIKE && cfg.SPIKE.MAX_AGE_HOURS) || 4;
-  let nowMin = 0;
-  for (const sym of Object.keys(series)) {
-    const last = series[sym][series[sym].length - 1];
-    if (last && last.min > nowMin) nowMin = last.min;
-  }
-  const minTs = nowMin - maxAgeH * 60; // 이 시각 이후 매집만 유효
-  for (const sym of Object.keys(series)) {
-    const arr = series[sym].sort((a, b) => a.min - b.min);
-    let cumNet = 0;
-    for (const x of arr) cumNet += x.net;
-    // 윈도우 슬라이딩 최대 순매수 (winMin<=1이면 단일 틱). 단 최근 N시간 이내 구간만.
-    let spike = -Infinity, spikeTs = null;
-    for (let i = 0; i < arr.length; i++) {
-      if (arr[i].min < minTs) continue; // 오래된 매집 제외 (스파이크 끝 시각 기준)
-      let s = 0;
-      for (let j = i; j >= 0 && (winMin <= 1 ? j === i : arr[i].min - arr[j].min < winMin); j--) s += arr[j].net;
-      if (s > spike) { spike = s; spikeTs = arr[i].ts; }
-    }
-    if (spike === -Infinity) continue;
-    out[sym] = { spike, spikeTs, cumNet };
-  }
-  return Object.keys(out).length ? out : null;
-}
-
+// 기존 호환 — verifier 등 다른 모듈에서 사용 가능
 function getRecentSeries(symbol, windowTicks) {
   const rows = _readAllRows();
   if (!rows) return null;
@@ -115,4 +68,145 @@ function getRecentSeries(symbol, windowTicks) {
   return series.length ? series : null;
 }
 
-module.exports = { getLatestExecBlock, getRecentSeries, getSpikes, _csvPath };
+// ts ("2026-05-27 09:14:05") → 시간(0~23)
+function _hourOf(ts) {
+  const m = /(\d{2}):/.exec(ts);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+// 호가 CSV 시간별 최우선매도가 (가격 추적용)
+// 캐시 (tick 단위 무효화 — 같은 분 안에 재호출 시 재사용)
+const _obCache = { at: 0, data: null };
+const _OB_TTL_MS = 50 * 1000;
+
+function _readOrderbookHourly() {
+  const now = Date.now();
+  if (_obCache.data && (now - _obCache.at) < _OB_TTL_MS) return _obCache.data;
+  const p = _orderbookPath();
+  if (!fs.existsSync(p)) { _obCache.data = null; _obCache.at = now; return null; }
+  let txt;
+  try { txt = fs.readFileSync(p, 'utf8'); }
+  catch (e) { console.error(`[collector] ob read fail: ${e.message}`); return null; }
+  if (txt.charCodeAt(0) === 0xFEFF) txt = txt.slice(1);
+  const lines = txt.split('\n').filter(l => l.trim() !== '');
+  // {symbol: {hour: [prices]}}
+  const map = {};
+  for (let i = 1; i < lines.length; i++) {
+    const f = lines[i].split(',');
+    if (f.length < 10) continue;
+    const sym = f[1];
+    const h = _hourOf(f[0]);
+    const p = parseFloat(f[7]); // 최우선매도가
+    if (h === null || !Number.isFinite(p) || p <= 0) continue;
+    if (!map[sym]) map[sym] = {};
+    if (!map[sym][h]) map[sym][h] = [];
+    map[sym][h].push(p);
+  }
+  _obCache.data = map;
+  _obCache.at = now;
+  return map;
+}
+
+// === v3 신규: 흡수 검출 ===
+// 거래량 ≥ 평소(하위25%) × 3배 AND 같은 윈도우 가격폭 ≤ 4% = 흡수.
+// 반환: { symbol: { surge, range, time, dayValue } }
+function detectAbsorption() {
+  const rows = _readAllRows();
+  if (!rows) return null;
+  const ob = _readOrderbookHourly();
+  if (!ob) { console.warn('[collector] no orderbook CSV for absorption'); return null; }
+
+  const A = cfg.ABSORPTION;
+  const majors = new Set(cfg.MAJORS);
+
+  // 종목별 시간별 거래대금 + 종목별 총 거래대금
+  const hourlyVol = {}, dayVol = {};
+  for (const r of rows) {
+    if (majors.has(r.symbol)) continue;
+    const h = _hourOf(r.ts);
+    if (h === null) continue;
+    if (!hourlyVol[r.symbol]) { hourlyVol[r.symbol] = {}; dayVol[r.symbol] = 0; }
+    hourlyVol[r.symbol][h] = (hourlyVol[r.symbol][h] || 0) + r.tradeValue;
+    dayVol[r.symbol] += r.tradeValue;
+  }
+
+  const out = {};
+  for (const sym of Object.keys(hourlyVol)) {
+    if (dayVol[sym] < A.DEAD_COIN_MIN_24H_KRW) continue;
+    const prices = ob[sym] || {};
+    const hours = Object.keys(hourlyVol[sym]).map(Number).sort((a, b) => a - b);
+    if (hours.length < A.LOOKBACK_HOURS) continue;
+
+    // baseline = 하위 N% 시간의 거래량
+    const sortedVols = hours.map(h => hourlyVol[sym][h]).sort((a, b) => a - b);
+    const idx = Math.floor(sortedVols.length * A.BASELINE_PERCENTILE / 100);
+    const baseline = sortedVols[idx];
+    if (!(baseline > 0)) continue;
+
+    // N시간 슬라이딩 윈도우 중 최고 흡수 찾기
+    let best = null;
+    for (let i = 0; i <= hours.length - A.LOOKBACK_HOURS; i++) {
+      const win = hours.slice(i, i + A.LOOKBACK_HOURS);
+      const vols = win.map(h => hourlyVol[sym][h]);
+      const winPrices = win.flatMap(h => prices[h] || []);
+      if (winPrices.length < 3) continue;
+
+      const surge = Math.max(...vols) / baseline;
+      const hi = Math.max(...winPrices);
+      const lo = Math.min(...winPrices);
+      const range = (hi - lo) / lo * 100;
+
+      if (surge >= A.VOLUME_SURGE_MIN && range <= A.PRICE_RANGE_MAX) {
+        // 더 강한 흡수면 갱신 (점수 = surge / range — 정렬용)
+        const score = surge / (range + 0.5);
+        if (!best || score > best.score) {
+          best = { surge, range, time: `${win[win.length - 1]}시`, score };
+        }
+      }
+    }
+
+    if (best) {
+      out[sym] = {
+        surge: best.surge,
+        range: best.range,
+        time: best.time,
+        dayValue: dayVol[sym],
+      };
+    }
+  }
+
+  return Object.keys(out).length ? out : null;
+}
+
+// === v3 신규: 호가에서 현재 매도벽 정보 ===
+// 반환: { top5Ask, ask1Price } — 표시용 (필터 아님)
+function getRecentOrderbookForWall(symbol) {
+  const p = _orderbookPath();
+  if (!fs.existsSync(p)) return null;
+  let txt;
+  try { txt = fs.readFileSync(p, 'utf8'); } catch (e) { return null; }
+  if (txt.charCodeAt(0) === 0xFEFF) txt = txt.slice(1);
+  const lines = txt.split('\n').filter(l => l.trim() !== '');
+  // 뒤에서 훑어 해당 종목 최근 10개 평균
+  const recent = [];
+  for (let i = lines.length - 1; i >= 1 && recent.length < 10; i--) {
+    const f = lines[i].split(',');
+    if (f.length < 10 || f[1] !== symbol) continue;
+    const top5 = parseFloat(f[5]);
+    const ask1 = parseFloat(f[7]);
+    if (!Number.isFinite(top5) || !Number.isFinite(ask1) || ask1 <= 0) continue;
+    recent.push({ top5Ask: top5, ask1Price: ask1 });
+  }
+  if (!recent.length) return null;
+  const avgTop5 = recent.reduce((a, b) => a + b.top5Ask, 0) / recent.length;
+  const avgPrice = recent.reduce((a, b) => a + b.ask1Price, 0) / recent.length;
+  return { top5Ask: avgTop5, ask1Price: avgPrice };
+}
+
+module.exports = {
+  // v3 신규
+  detectAbsorption, getRecentOrderbookForWall,
+  // 기존 호환
+  getLatestExecBlock, getRecentSeries, _csvPath: _tradePath,
+};
+

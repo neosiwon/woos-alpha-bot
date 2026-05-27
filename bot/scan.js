@@ -1,60 +1,74 @@
+// bot/scan.js — 후보 선정 (v3)
+// 흐름: 흡수(1단) → 박스 상단 통과(2단). 통과한 종목만 candidates로 반환.
+// candidates는 index.js → trigger.evaluate로 넘어가서 VWAP 진입(3단) 평가.
+//
+// 5/27 백테스트:
+//   - 1단 흡수: 81개
+//   - 2단 박스: 15개 (큰 발사 +10%↑ 모두 포함)
+
 const cfg = require('../config/config');
 const upbit = require('./exchange/upbit');
 const collector = require('./source/collector');
+const resistance = require('./source/resistance');
 
-// 후보 선정 (A 구조 — 5/25 259종목 검증):
-//   1) 매집 감지: 5분 순매수 스파이크 상위 N (MAJORS 제외) — 세력 매집 종목
-//   2) 수축 확인: 그 중 박스폭 <= BOX_PCT_MAX — 매집의 동반 + 안전장치 + 발사 대기
-// 근거: 매집(스파이크상위)+수축 그룹 +5%상승 47% vs 죽은수축 7% (7배).
-//       순서 중요 — 수축 먼저 걸면 죽은 코인 다수. 매집 먼저 걸러야 함.
 async function findCandidates() {
-  // 1단계 — 매집 스파이크 (collector, CSV 기반)
-  const spikes = collector.getSpikes();
-  if (!spikes) { console.warn('[scan] 스파이크 없음 (CSV 미수집?) -> 스킵'); return null; }
+  // 1단: 흡수
+  const absorption = collector.detectAbsorption();
+  if (!absorption) { console.warn('[scan] 흡수 후보 없음 -> 스킵'); return null; }
+  const syms = Object.keys(absorption);
+  console.log(`[scan] 1단 흡수 후보 ${syms.length}개`);
 
-  const majors = new Set(cfg.MAJORS);
-  // 매집(양) 종목만 추려 스파이크 내림차순
-  const positives = Object.keys(spikes)
-    .filter(sym => !majors.has(sym))            // MAJORS(시총 대형 + XLM) 제외
-    .filter(sym => spikes[sym].spike > 0)       // 0-0: 순매수 스파이크 양(+)만 (매집)
-    .sort((a, b) => spikes[b].spike - spikes[a].spike);
+  // 2단: 박스 상단 검증 (배치)
+  const results = await upbit._batchMap(syms, async (sym) => {
+    const abs = absorption[sym];
+    const res = await resistance.evaluate(sym);
+    if (!res.passed) return null;
 
-  // 동적 상위 N% 컷 (5/25 알파 역산: 상위 0.4~2.0% → TOP_PCT 2.5%). MIN/MAX로 보정.
-  const sp = cfg.SPIKE;
-  let cut = Math.round(positives.length * (sp.TOP_PCT / 100));
-  if (sp.TOP_MIN != null) cut = Math.max(cut, sp.TOP_MIN);
-  if (sp.TOP_MAX != null) cut = Math.min(cut, sp.TOP_MAX);
-  cut = Math.min(cut, positives.length);
-  const ranked = positives.slice(0, cut);
+    // 매도벽 비율 = 매도벽(KRW) / 그날 거래대금(KRW). 표시용.
+    let wallRatioPct = null;
+    if (res.askWallKrw && abs.dayValue > 0) {
+      wallRatioPct = res.askWallKrw / abs.dayValue * 100;
+    }
 
-  if (!ranked.length) { console.warn('[scan] 매집 후보 0'); return null; }
-  console.log('[scan] 매집 스파이크 상위 ' + ranked.length + '종 (전체 ' + positives.length + ' 중 ' + sp.TOP_PCT + '%): ' + ranked.join(', '));
-
-  // 2단계 — 수축 확인 (업비트 캔들, 상위 소수만 조회 = 가벼움)
-  const need = Math.ceil(cfg.SQUEEZE.LOOKBACK_MIN / 5); // 60분 / 5분 = 12개
-  const candidates = [];
-
-  const results = await upbit._batchMap(ranked, async (sym) => {
-    const candles = await upbit.fetchCandlesM5(sym, need);
-    if (!candles) return null;                          // 0-0: 캔들 부족 제외
-    const boxPct = upbit.calcBoxPct(candles);
-    if (boxPct === null) return null;                   // 0-0: 계산 불가 제외
-    if (boxPct > cfg.SQUEEZE.BOX_PCT_MAX) return null;  // 수축 아님 제외
     return {
       symbol: sym,
-      boxPct,
-      referencePrice: candles[candles.length - 1].close,
-      spike: spikes[sym].spike,                         // 매집 강도 (알림 표시용)
-      spikeTs: spikes[sym].spikeTs,
-      rank: positives.indexOf(sym) + 1,                 // 매집 스파이크 전체 순위 (#1=최대)
+      // 흡수 정보
+      surge: abs.surge,
+      range: abs.range,
+      absorbTime: abs.time,
+      dayValue: abs.dayValue,
+      // 저항 정보
+      toTopPct: res.toTopPct,
+      high24: res.high24,
+      referencePrice: res.currentPrice,
+      wallRatioPct,        // 표시용 (null 가능)
+      askWallKrw: res.askWallKrw,
     };
   });
 
-  for (const r of results) if (r) candidates.push(r);
-  // 매집 강도순 정렬
-  candidates.sort((a, b) => b.spike - a.spike);
-  console.log('[scan] 매집+수축 통과 후보 ' + candidates.length + '종');
+  const candidates = results.filter(x => x);
+  // 박스 여유 큰 순 (= 발사 잠재력 큰 순) 정렬
+  candidates.sort((a, b) => b.toTopPct - a.toTopPct);
+  console.log(`[scan] 2단 박스 통과 ${candidates.length}개`);
   return candidates;
 }
 
-module.exports = { findCandidates };
+// 9시 일일 리포트용 — 1단 흡수 후보 요약 텍스트
+function buildAbsorptionSummary() {
+  const absorption = collector.detectAbsorption();
+  if (!absorption) return '🌅 오늘의 매집 후보: 없음';
+  const list = Object.entries(absorption)
+    .map(([s, a]) => ({ sym: s, ...a, score: a.surge / (a.range + 0.5) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10);
+  if (!list.length) return '🌅 오늘의 매집 후보: 없음';
+  const lines = list.map((x, i) => {
+    const ko = upbit.getKoreanName(x.sym);
+    const name = ko ? `${ko}(${x.sym})` : x.sym;
+    return `${i + 1}. ${name} 거래 ${x.surge.toFixed(1)}배↑ 가격 ${x.range.toFixed(1)}% @${x.time}`;
+  });
+  return `🌅 오늘의 매집 후보 ${list.length}종 (TOP 10)\n` + lines.join('\n');
+}
+
+module.exports = { findCandidates, buildAbsorptionSummary };
+

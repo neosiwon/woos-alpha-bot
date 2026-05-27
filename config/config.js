@@ -1,75 +1,101 @@
-// woos-alpha-bot config — 단일 진실원 (근거는 docs 명세서)
-// [검증대기] = 실측 안 된 값, null 유지, 임의값 금지 (원칙 0-0)
+// woos-alpha-bot config v3 — 흡수+VWAP+저항 트리거 (2026-05-27 검증 기반)
+// [검증대기] 표시 = 실측 안 된 값. 기존 표기 유지.
 module.exports = {
-  ALPHA_TRIGGER: {
-    EXEC_STRENGTH_MIN: 150,
-    EXEC_DYNAMIC_TOP_PCT: 5,
-    EXEC_USE_DYNAMIC: true,
-    MIN_POPULATION: null,
-    MIN_TRADES: 30,
-    MIN_SELL_KRW: 500000,
-    MIN_VALUE_KRW: 10000000,
-    PERSISTENCE_WINDOW: 10,
-    PERSISTENCE_MIN_HITS: 3,
-    PERSISTENCE_STRONG_HITS: 4,
-    SIGNAL_COOLDOWN_MIN: 30
+
+  // ── 1차: 흡수 (매집 후보) ──────────────────────────────────────────
+  // 거래량 ≥ 평소(하위25%) × N배 + 같은 윈도우 가격폭 ≤ X% = 흡수.
+  // 5/27 백테스트: 거래3배+ AND 가격폭4%↓ → 후보 81개, 원본 5/6 포함.
+  ABSORPTION: {
+    LOOKBACK_HOURS: 3,            // 3시간 슬라이딩 윈도우
+    VOLUME_SURGE_MIN: 3.0,
+    PRICE_RANGE_MAX: 4.0,
+    BASELINE_PERCENTILE: 25,      // 평소 = 하위 25% (발사시간 오염 방지)
+    DEAD_COIN_MIN_24H_KRW: 1.0e9, // 거래대금 10억 미만 제외
   },
-  SQUEEZE: {
-    BOX_PCT_MAX: 5.0,
-    LOOKBACK_MIN: 60,
-    SWEET_MIN: 1.5,
-    SWEET_MAX: 4.0
+
+  // ── 2차: 저항 (발사 잠재력) ───────────────────────────────────────
+  // 박스 상단(24h 고점)까지 ≥ N% 여유. 위가 비어야 큰 발사 가능.
+  // 5/27: 81개 → 15개로 좁힘, 큰 발사(+10%↑) 모두 포함.
+  // 매도벽 비율은 표시만 — 흡수시점 거래량 부족해 필터로는 못 씀.
+  RESISTANCE: {
+    BOX_TOP_MIN_PCT: 7.0,
+    BOX_LOOKBACK_HOURS: 24,
+    SHOW_WALL_RATIO: true,        // 알람에 표시만 (필터 X)
   },
-  // 매집 스파이크 — 5/25 알파 3개(CPOOL/SOON/ERA) 역산. 1틱이 진짜/노이즈 분리 최고.
-  // 알파 1틱 스파이크 상위 0.4~2.0% (상위5위 내), 노이즈는 9%대 → 윈도우 짧을수록 분리도↑.
-  // 5분은 노이즈를 끌어올림(5분합이 죽은코인도 부풀림). 1틱 상위5 = 알파3 다포함/노이즈0.
-  SPIKE: {
-    WINDOW_MIN: 1,        // 1틱(1분) 순매수 스파이크. 수집간격 60초라 1=1틱. (5분은 노이즈 부풀림)
-    TOP_PCT: 2.5,         // 제외 후 스파이크 상위 N% 동적 컷 (알파 상위0.4~2.0%, 250종목 기준 ~6개)
-    TOP_MIN: 3,           // 종목수 적은 날 최소 후보 (상위% 너무 적게 나올 때 보정)
-    TOP_MAX: 10,          // 너무 많아질 때 상한 (정신없음 방지)
-    MAX_AGE_HOURS: 4,     // 매집 스파이크 유효시간 — 최근 N시간 이내 매집만 후보 (오래된 매집=김빠짐 제외)
-    // 장초반 표시 — 업비트 9시 일초기화 직후 매집 쏠림 관찰됨(5/25 상위30 중 9~11시 27%, 기대치 3배).
-    // 필터 아닌 표시만 (오후/저녁 알파도 많음 — IN 13:52/19:20, SOON 19:13). 시간대 수정 가능.
-    EARLY_HOUR_START: 7,  // 장초반 시작 시각(KST, 포함)
-    EARLY_HOUR_END: 11    // 장초반 종료 시각(KST, 이하). 매집 스파이크가 이 구간이면 ⏰ 라벨
-    // MAX_AGE_HOURS 4 + 장초반 7~11시 → 15시 이후엔 장초반 신호 자연 소멸(4h 만료)
-    // [검증대기] TOP_PCT 2.5%·윈도우1틱 — 며칠 관찰 후 조정. 모두 여기서 수정 가능.
+
+  // ── 3차: 점화 (VWAP 진입) ─────────────────────────────────────────
+  // 5분봉 종가가 24h VWAP ±1% 안 = 발사 점화.
+  // 5/27 검증: 원본 4/5 잡힘 (PROS는 흡수~발사 갭 너무 커서 제외).
+  // 쿨다운 30분으로 중복 방지.
+  VWAP_ENTRY: {
+    VWAP_HOURS: 24,
+    ENTRY_BAND_PCT: 1.0,
+    CANDLE_INTERVAL_MIN: 5,
   },
-  // 익절/손절 — 국면별 (5/9~25 알파 26건 백테스트, 50/30/20 분할, TP1도달시 손절→본절).
-  // STRONG(강세): TP 7/15/25 = 거래당 평균 +8.3%, 도달률 96/42/23%. 강세장 표본 검증.
-  // WEAK(약세): TP 5/10/15 = 보수값. 약세장 표본 없어 [검증대기] — 강세보다 빨리 확보.
-  // UNKNOWN(판정불가) = WEAK 적용 (보수). 손절 -5는 -3~-10 무차별이라 표준값.
-  EXIT_PARAMS: {
-    COMMON: { STOP_PCT: -5, HOLD_HOURS: 4 },
-    STRONG: { TP1: 7, TP2: 15, TP3: 25, W1: 0.50, W2: 0.30, W3: 0.20 },
-    WEAK:   { TP1: 5, TP2: 10, TP3: 15, W1: 0.50, W2: 0.30, W3: 0.20 } // [검증대기]
+
+  // ── 익절/손절 (구버전 호환 위해 EXIT_PARAMS도 유지) ────────────────
+  // 새 알람은 EXIT 사용. STOP -8%, TP1/2/3 = +5/10/15% (매수가 기준).
+  // 5/27 6코인 비교 결과 평단×1.10 방식과 차이 미미 → 단순한 A 채택.
+  EXIT: {
+    STOP_PCT: -8.0,
+    TP1_PCT: 5.0,  TP1_WEIGHT: 0.50,
+    TP2_PCT: 10.0, TP2_WEIGHT: 0.30,
+    TP3_PCT: 15.0, TP3_WEIGHT: 0.20,
+    HOLD_HOURS: 4,
+    TP1_TO_BREAKEVEN: true,
   },
-  MARKET_REGIME: {
-    STRONG: 'BTC.D down + USDT.D down',
-    WEAK: 'USDT.D up'
-  },
+
+  // ── 메이저 제외 ─────────────────────────────────────────────────
+  // 시총 ADA 이상 + 스테이블 + XLM. 단타 펌핑 구조 불가.
+  MAJORS: ['USDT','USDC','DAI','BTC','ETH','XRP','SOL','DOGE','ADA','BNB','TRX','XLM'],
+
+  // ── 시장 국면 (BTC.D/USDT.D) ─────────────────────────────────────
   REGIME_LOOKBACK_HOURS: 4,
   REGIME_CHANGE_THRESHOLD: 0.3,
   DOMINANCE_FILE: process.env.WOOS_DOM_FILE || '/home/neosiwon/woos-alpha-bot/dominance.json',
+
+  // ── 검증/리포트 ─────────────────────────────────────────────────
   VERIFY_HOURS: 4,
   VERIFY_LOG_FILE: process.env.WOOS_VERIFY_FILE || '/home/neosiwon/woos-alpha-bot/signals_log.csv',
   VERIFY_TRACK_FILE: process.env.WOOS_TRACK_FILE || '/home/neosiwon/woos-alpha-bot/tracking.json',
-  // 일일 성적표 — 매일 정해진 시각(KST)에 전 24시간 signals_log 집계해 텔레그램 발송.
-  DAILY_REPORT_HOUR: 9,   // 발송 시각(KST, 업비트 초기화 시점). null이면 비활성
+  DAILY_REPORT_HOUR: 9,
   REPORT_STATE_FILE: process.env.WOOS_REPORT_FILE || '/home/neosiwon/woos-alpha-bot/report_state.json',
+
+  // ── 알람 채널 분리 ───────────────────────────────────────────────
+  // PRIVATE: 운영자 본인 채팅 (2차/3차/리포트 모두)
+  // GROUP  : 단톡방 (3차 점화 알람만, 안 설정되면 PRIVATE으로 fallback)
+  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || null,
+  TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID || null,                       // 기존 호환
+  TELEGRAM_CHAT_ID_PRIVATE: process.env.TELEGRAM_CHAT_ID_PRIVATE || null,
+  TELEGRAM_CHAT_ID_GROUP: process.env.TELEGRAM_CHAT_ID_GROUP || null,
+
+  // ── 신호 쿨다운 ──────────────────────────────────────────────────
+  SIGNAL_COOLDOWN_MIN: 30,        // 3차 발사 알람 쿨다운
+  STAGE2_COOLDOWN_MIN: 60,        // 2차 감시 알람 쿨다운 (더 길게)
+
+  // ── 운영 ────────────────────────────────────────────────────────
+  LOOP_INTERVAL_SEC: 60,
   EXCHANGE: 'upbit',
-  // 제외 명단 (스캔/신호 제외) — 시총 ADA 이상 대형 + 수동 추가. 단타 펌핑 구조 불가.
-  // 스테이블3 / 대형8(시총 ADA 12.5조 이상) / XLM(7.1조, 5/25 노이즈로 상위 떠서 수동 추가)
-  // 가감은 이 배열에서 직접. ONDO/SUI/NEAR 등 ADA 미만은 후보 유지(알파 이력 있음).
-  MAJORS: ['USDT','USDC','DAI','BTC','ETH','XRP','SOL','DOGE','ADA','BNB','TRX','XLM'],
   UPBIT_BATCH_SIZE: 5,
   UPBIT_BATCH_DELAY_MS: 1000,
   COLLECTOR_CSV_DIR: process.env.WOOS_CSV_DIR || '/home/neosiwon/woos_logs',
   COLLECTOR_CSV_PREFIX: 'woos_',
+  ORDERBOOK_CSV_PREFIX: 'orderbook_',
+  STATE_FILE: process.env.WOOS_STATE_FILE || '/home/neosiwon/woos-alpha-bot/state.json',
+
+  // ── 구버전 호환 (기존 코드에서 참조하는 키들 — 삭제 X) ───────────
+  ALPHA_TRIGGER: {
+    SIGNAL_COOLDOWN_MIN: 30,
+    EXEC_STRENGTH_MIN: 150,
+    EXEC_USE_DYNAMIC: true,
+  },
+  SQUEEZE: { BOX_PCT_MAX: 5.0, LOOKBACK_MIN: 60, SWEET_MIN: 1.5, SWEET_MAX: 4.0 },
+  SPIKE: { WINDOW_MIN: 1, TOP_PCT: 2.5, TOP_MIN: 3, TOP_MAX: 10, MAX_AGE_HOURS: 4, EARLY_HOUR_START: 7, EARLY_HOUR_END: 11 },
+  EXIT_PARAMS: {
+    COMMON: { STOP_PCT: -8, HOLD_HOURS: 4 },
+    STRONG: { TP1: 5, TP2: 10, TP3: 15, W1: 0.50, W2: 0.30, W3: 0.20 },
+    WEAK:   { TP1: 5, TP2: 10, TP3: 15, W1: 0.50, W2: 0.30, W3: 0.20 },
+  },
   DEAD_COIN_MIN_24H_KRW: null,
-  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || null,
-  TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID || null,
-  STATE_FILE: process.env.WOOS_STATE_FILE || './state.json',
-  LOOP_INTERVAL_SEC: 60
 };
+

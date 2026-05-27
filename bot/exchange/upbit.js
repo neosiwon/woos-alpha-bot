@@ -1,3 +1,5 @@
+// bot/exchange/upbit.js — 업비트 API 래퍼
+// 기존 기능 모두 유지 + 새 메서드 추가 (v3 트리거용)
 const cfg = require('../../config/config');
 const BASE = 'https://api.upbit.com/v1';
 const koreanNames = {}; // 심볼 -> 한글명
@@ -34,16 +36,63 @@ async function fetchUniverse() {
     .filter(sym => !majors.has(sym));
 }
 
+// === 5분봉 (v3: volume 포함 + 자동 페이징) ===
+// count > 200이면 자동으로 두 페이지 받아 합침 (업비트 한 번 200개 제한).
+// 반환: 시간 오름차순. {ts, open, high, low, close, value, volume}
 async function fetchCandlesM5(symbol, count) {
-  const raw = await _get(`${BASE}/candles/minutes/5?market=KRW-${symbol}&count=${count}`);
+  const need = Math.max(1, count);
+  // 1페이지: 최신 200개 (또는 need <200이면 need개)
+  const firstCount = Math.min(need, 200);
+  const raw1 = await _get(`${BASE}/candles/minutes/5?market=KRW-${symbol}&count=${firstCount}`);
+  if (!Array.isArray(raw1) || raw1.length === 0) {
+    console.warn(`[upbit] ${symbol} M5 first page empty`);
+    return null;
+  }
+  let all = raw1.slice();
+  // 2페이지 이상 필요?
+  if (need > 200) {
+    const oldest = raw1.reduce((a, b) =>
+      a.candle_date_time_kst < b.candle_date_time_kst ? a : b
+    );
+    const need2 = need - raw1.length;
+    const raw2 = await _get(
+      `${BASE}/candles/minutes/5?market=KRW-${symbol}&count=${need2}&to=${encodeURIComponent(oldest.candle_date_time_kst)}`
+    );
+    if (Array.isArray(raw2) && raw2.length) all = all.concat(raw2);
+  }
+  // 시간 오름차순으로 변환
+  return all
+    .sort((a, b) => a.candle_date_time_kst.localeCompare(b.candle_date_time_kst))
+    .map(c => ({
+      ts: c.candle_date_time_kst,
+      open: c.opening_price,
+      high: c.high_price,
+      low: c.low_price,
+      close: c.trade_price,
+      value: c.candle_acc_trade_price,   // 거래대금 (KRW)
+      volume: c.candle_acc_trade_volume, // 거래량 (코인 수량)
+    }));
+}
+
+// === 1시간봉 (박스 상단 계산용, v3 신규) ===
+async function fetchCandlesM60(symbol, count) {
+  const raw = await _get(`${BASE}/candles/minutes/60?market=KRW-${symbol}&count=${count}`);
   if (!Array.isArray(raw)) return null;
-  if (raw.length < count) { console.warn(`[upbit] ${symbol} candles short (${raw.length}/${count})`); return null; }
   return raw.slice().reverse().map(c => ({
     ts: c.candle_date_time_kst, open: c.opening_price, high: c.high_price,
     low: c.low_price, close: c.trade_price, value: c.candle_acc_trade_price,
   }));
 }
 
+// === 현재가 (v3 신규) ===
+// /ticker 한 번에 여러 종목 가능. 단일 종목용 헬퍼.
+async function fetchTicker(symbol) {
+  const arr = await _get(`${BASE}/ticker?markets=KRW-${symbol}`);
+  if (!Array.isArray(arr) || !arr.length) return null;
+  return { trade_price: arr[0].trade_price };
+}
+
+// === 기존 유틸 (그대로 유지) ===
 function calcBoxPct(candles) {
   if (!Array.isArray(candles) || candles.length === 0) return null;
   const hi = Math.max(...candles.map(c => c.high));
@@ -52,7 +101,6 @@ function calcBoxPct(candles) {
   return ((hi - lo) / lo) * 100;
 }
 
-// ATR (Average True Range) — 변동성. candles: [{high,low,close}], period 기본14
 function calcATR(candles, period) {
   period = period || 14;
   if (!Array.isArray(candles) || candles.length < period + 1) return null;
@@ -69,8 +117,6 @@ function calcATR(candles, period) {
 
 function getKoreanName(sym) { return koreanNames[sym] || null; }
 
-// 한글명 캐시가 비어있으면 market/all 한 번 받아 채움 (fetchUniverse 미호출 대비).
-// 알람 직전 notify에서 호출 → 봇이 universe 안 받아도 한글명 보장.
 let _krFetched = false;
 async function ensureKoreanNames() {
   if (_krFetched && Object.keys(koreanNames).length) return;
@@ -80,4 +126,9 @@ async function ensureKoreanNames() {
     _krFetched = true;
   }
 }
-module.exports = { fetchUniverse, fetchCandlesM5, calcBoxPct, _batchMap, getKoreanName, ensureKoreanNames, calcATR };
+
+module.exports = {
+  fetchUniverse, fetchCandlesM5, fetchCandlesM60, fetchTicker,
+  calcBoxPct, _batchMap, getKoreanName, ensureKoreanNames, calcATR,
+};
+
