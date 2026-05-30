@@ -5,13 +5,13 @@
 # '활성 종목'만 틱 단위로 ~/woos_logs/tick_YYYYMMDD.csv.gz 에 기록.
 #
 # 목적: 일봉/60초 집계에 묻히는 세력 매집 체결 흐름을, 체결 한 건 단위로 본다.
-# 전종목 전체 틱을 다 저장하면 용량 폭발 → 활성 종목만 선별 저장.
+# 전 종목(스테이블/메이저 제외) 틱을 상시 저장. 활성(급증) 여부는 컬럼으로 마킹.
 #
-# 기록 컬럼: 시각KST, 종목, 체결가, 체결량(코인), 체결액(원), 매수매도(BID/ASK), 체결ID
+# 기록 컬럼: 시각KST, 종목, 체결가, 체결량(코인), 체결액(원), 매수매도(BID/ASK), 체결ID, 활성(1/0)
 #
 # 활성 판정: 종목별 직전 10분 분당 체결건수의 중앙값 대비 현재 분 체결건수가
 #           ACTIVE_SURGE 배 이상이면 그 종목을 ACTIVE_HOLD_MIN 분간 '활성'으로 등록.
-#           활성 종목의 모든 틱을 저장. (비활성 종목 틱은 카운트만 하고 버림)
+#           활성 여부는 틱의 마지막 컬럼(활성=1/0)으로 기록. 저장은 전 종목 상시.
 
 import json, gzip, os, time, threading
 from collections import defaultdict, deque
@@ -30,6 +30,8 @@ BASELINE_WINDOW = 10     # 평소 기준선 = 직전 N분 분당건수 중앙값
 RECONNECT_SEC = 5
 
 STABLE = {"USDT","USDC","DAI","TUSD","BUSD"}
+# 메이저(원본 신호 안 오는 시총 상위) — 거래량만 크고 매집 대상 아님, 상시저장에서 제외
+MAJORS = {"BTC","ETH","XRP","SOL","DOGE","ADA","TRX","LINK","AVAX","DOT","BCH","SUI"}
 
 # 종목별: 분(минуте)별 체결건수 누적, 평소 기준선용 deque, 활성 만료시각
 _minute_counts = defaultdict(lambda: defaultdict(int))  # {sym: {minute_str: count}}
@@ -49,6 +51,7 @@ def get_krw_markets():
         if not mk.startswith("KRW-"): continue
         sym = mk.split("-")[1]
         if sym in STABLE: continue
+        if sym in MAJORS: continue   # 메이저 제외 (신호 안 옴)
         out.append(mk)
     return out
 
@@ -59,7 +62,7 @@ def _tick_path():
 def _write_header_if_new(path):
     if not os.path.exists(path):
         with gzip.open(path, "at", encoding="utf-8") as f:
-            f.write("시각KST,종목,체결가,체결량,체결액,매수매도,체결ID\n")
+            f.write("시각KST,종목,체결가,체결량,체결액,매수매도,체결ID,활성\n")
 
 def write_ticks(rows):
     if not rows: return
@@ -109,16 +112,17 @@ def on_message(ws, message):
     minute = now.strftime("%Y-%m-%d %H:%M")
     with _lock:
         _minute_counts[sym][minute] += 1
-    # 활성 종목이면 틱 저장
-    if is_active(sym, now):
-        price = d.get("trade_price",0)
-        vol = d.get("trade_volume",0)
-        ts = d.get("trade_timestamp",0)
-        ab = d.get("ask_bid","")       # ASK(매도체결) / BID(매수체결)
-        seq = d.get("sequential_id","")
-        amount = round(price*vol, 2)
-        tstr = datetime.fromtimestamp(ts/1000, KST).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if ts else now.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        write_ticks([[tstr, sym, price, vol, amount, ab, seq]])
+    # 전 종목 상시 저장 (메이저/스테이블은 구독단계에서 이미 제외됨)
+    # 활성 여부는 컬럼으로 마킹 (급증 시점 지표용 — 나중에 분석)
+    price = d.get("trade_price",0)
+    vol = d.get("trade_volume",0)
+    ts = d.get("trade_timestamp",0)
+    ab = d.get("ask_bid","")       # ASK(매도체결) / BID(매수체결)
+    seq = d.get("sequential_id","")
+    amount = round(price*vol, 2)
+    act = 1 if is_active(sym, now) else 0   # 활성(급증)구간이면 1
+    tstr = datetime.fromtimestamp(ts/1000, KST).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if ts else now.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    write_ticks([[tstr, sym, price, vol, amount, ab, seq, act]])
 
 def on_error(ws, err):
     print(f"[ws] error: {err}", flush=True)
