@@ -89,40 +89,76 @@ def main():
     중립={s:d for s,d in sym_data.items() if d['라벨']=='중립'}
     종료된={s:d for s,d in sym_data.items() if d['종료']>0}
 
-    # 순위: 매집=순매수 큰 순, 분배=순매도 큰 순 (절댓값)
-    매집_s=sorted(매집.items(), key=lambda x:-x[1]['순매수'])
-    분배_s=sorted(분배.items(), key=lambda x:x[1]['순매수'])
-    종료_s=sorted(종료된.items(), key=lambda x:-abs(x[1]['순매수']))
+    def build_and_send(exch_filter, exch_name, emoji_head):
+        # exch_filter: '업비트' or '빗썸' / 해당 거래소 종목만
+        sd={k:v for k,v in sym_data.items() if v.get('거래소','')==exch_filter}
+        매집={s:d for s,d in sd.items() if d['라벨']=='매집'}
+        분배={s:d for s,d in sd.items() if d['라벨']=='분배'}
+        중립={s:d for s,d in sd.items() if d['라벨']=='중립'}
+        종료={s:d for s,d in sd.items() if d['종료']>0}
+        매집_s=sorted(매집.items(), key=lambda x:-x[1]['순매수'])
+        분배_s=sorted(분배.items(), key=lambda x:x[1]['순매수'])
+        종료_s=sorted(종료.items(), key=lambda x:-abs(x[1]['순매수']))
 
-    lines=[title,"─────────────"]
-    if 종료_s:
-        lines.append(f"🎯 <b>매집종료 {len(종료_s)}</b> (표류=신호후보)")
-        for i,(sym,d) in enumerate(종료_s,1):
-            ex=f"[{d['거래소']}]" if d['거래소'] else ""
-            lines.append(f"{i}. {ex} <b>{kn(sym)}</b>  {d['마지막']}")
-        lines.append("─────────────")
-    if 매집_s:
-        lines.append(f"🟢 <b>매집 {len(매집_s)}</b> (순매수순)")
-        for i,(sym,d) in enumerate(매집_s[:10],1):
-            ex=f"[{d['거래소']}]" if d['거래소'] else ""
-            lines.append(f"{i}. {ex} <b>{kn(sym)}</b>")
-            lines.append(f"   {d['수량']}개×{d['횟수']}회 건당{d['평균금액']/10000:.0f}만 순{d['순매수']:+.0f}만")
-        lines.append("─────────────")
-    if 분배_s:
-        lines.append(f"🔴 <b>분배 {len(분배_s)}</b> (순매도순)")
-        for i,(sym,d) in enumerate(분배_s[:8],1):
-            ex=f"[{d['거래소']}]" if d['거래소'] else ""
-            lines.append(f"{i}. {ex} <b>{kn(sym)}</b>")
-            lines.append(f"   {d['수량']}개×{d['횟수']}회 건당{d['평균금액']/10000:.0f}만 순{d['순매수']:+.0f}만")
-        lines.append("─────────────")
-    if 중립:
-        lines.append(f"⚪ 중립 {len(중립)}: "+", ".join(kn(s) for s in list(중립)[:8]))
-    if not sym_data:
-        lines.append("(이 시간대 봇 활동 없음)")
-    msg="\n".join(lines)
-    ok=send_telegram(token,chat,msg)
-    print(msg)
-    print(f"\n[{mode}] 발송{'OK' if ok else 'X'} 매집{len(매집)} 분배{len(분배)} 종료{len(종료된)}")
+        # 순매수 만원 → 보기 좋게 (억/만)
+        def fmt_won(man):
+            v=man*10000
+            sign='+' if v>=0 else '−'; av=abs(v)
+            if av>=1e8: return f"{sign}{av/1e8:.1f}억"
+            return f"{sign}{av/1e4:,.0f}만"
+        # 수량 콤마
+        def fmt_qty(q):
+            try:
+                qf=float(q)
+                return f"{qf:,.0f}" if qf>=1000 else f"{qf:g}"
+            except: return str(q)
+        CIRC="①②③④⑤⑥⑦⑧⑨⑩"
+        def num(i): return CIRC[i-1] if 1<=i<=10 else f"{i}."
+        BAR="━━━━━━━━━━━━━━"
+
+        lines=[f"{emoji_head} <b>{exch_name} · {title_sub}</b>", BAR, ""]
+        if 종료_s:
+            lines.append(f"🎯 <b>매집종료 {len(종료_s)}</b> · 표류=신호후보")
+            lines.append("")
+            for i,(sym,d) in enumerate(종료_s,1):
+                lines.append(f"　{num(i)} {kn(sym)}")
+                lines.append(f"　　└ {d['마지막']} 표류 시작")
+                lines.append("")
+            lines.append(BAR); lines.append("")
+        if 매집_s:
+            lines.append(f"🟢 <b>매집 {len(매집_s)}</b> · 순매수순")
+            lines.append("")
+            for i,(sym,d) in enumerate(매집_s[:10],1):
+                lines.append(f"　{num(i)} <b>{kn(sym)}</b>")
+                lines.append(f"　　{fmt_qty(d['수량'])}개 × {d['횟수']}회")
+                lines.append(f"　　건당 {d['평균금액']/10000:.0f}만 ┃ 순 {fmt_won(d['순매수'])}")
+                lines.append("")
+            lines.append(BAR); lines.append("")
+        if 분배_s:
+            lines.append(f"🔴 <b>분배 {len(분배_s)}</b> · 순매도순")
+            lines.append("")
+            for i,(sym,d) in enumerate(분배_s[:8],1):
+                lines.append(f"　{num(i)} <b>{kn(sym)}</b>")
+                lines.append(f"　　{fmt_qty(d['수량'])}개 × {d['횟수']}회")
+                lines.append(f"　　건당 {d['평균금액']/10000:.0f}만 ┃ 순 {fmt_won(d['순매수'])}")
+                lines.append("")
+            lines.append(BAR); lines.append("")
+        if 중립:
+            lines.append(f"⚪ <b>중립</b> · "+", ".join(kn(x) for x in list(중립)[:8]))
+        if not sd:
+            lines.append("(이 시간대 봇 활동 없음)")
+        # 끝 빈 줄 정리
+        while lines and lines[-1]=="": lines.pop()
+        msg="\n".join(lines)
+        ok=send_telegram(token,chat,msg)
+        print(msg); print(f"[{exch_name}] 발송{'OK' if ok else 'X'} 매집{len(매집_s)} 분배{len(분배_s)} 종료{len(종료_s)}\n")
+
+    # title에서 기간 부분만 추출
+    title_sub = title.replace("📊 <b>","").replace("</b>","").replace("오늘 봇 요약","하루 요약").replace("4시간 봇 요약","4시간 요약")
+
+    # 업비트 / 빗썸 따로 발송
+    build_and_send('업비트', '업비트', '📊')
+    build_and_send('빗썸', '빗썸', '📊')
 
 if __name__=="__main__":
     main()
