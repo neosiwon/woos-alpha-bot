@@ -30,6 +30,8 @@ DIR_LABEL_TH  = 0.70    # 70%+ 한쪽이면 매집/분배, 아니면 중립
 # ── 분석 윈도우 ──
 WINDOW_MIN    = 15      # 최근 15분 (5분마다 실행, 방금 봇 포착/종료)
 # ── 매집종료 판정 ──
+PRICE_FIRE    = 2.0     # 매집봇 + 윈도우내 가격 +2%↑ 동반 = 발사 (박제면 매집중)
+INT_QTY_MIN   = 40      # 정수 수량이라도 40회+ 반복이면 봇 인정 (SIGN 833개×67회 교훈)
 DEAD_DROP     = 0.3     # 직전 활성봇 종목의 최근 체결수가 이전 대비 30%↓면 거래급감
 STABLE = {'USDT','USDC','DAI','TUSD','BUSD'}
 SKIP_MAJOR = {'BTC','ETH','XRP','SOL','DOGE','ADA','TRX','LINK','AVAX','DOT','BCH','SUI'}
@@ -45,20 +47,19 @@ def load_env():
     return env
 
 def load_korean_names():
-    """업비트 KRW 종목 한글명 매핑 {티커: 한글명}. 실패시 빈 dict."""
-    try:
-        url="https://api.upbit.com/v1/market/all?isDetails=false"
-        with urllib.request.urlopen(url, timeout=10) as r:
-            data=json.loads(r.read().decode())
-        m={}
-        for x in data:
-            mk=x.get("market","")
-            if mk.startswith("KRW-"):
-                m[mk[4:]]=x.get("korean_name","")
-        return m
-    except Exception as e:
-        print(f"[krname] 실패: {e}")
-        return {}
+    """업비트+빗썸 KRW 한글명 매핑. 빗썸 단독 종목도 커버."""
+    m={}
+    for url in ("https://api.upbit.com/v1/market/all?isDetails=false",
+                "https://api.bithumb.com/v1/market/all?isDetails=false"):
+        try:
+            with urllib.request.urlopen(url, timeout=10) as r:
+                for x in json.loads(r.read().decode()):
+                    mk=x.get("market","")
+                    if mk.startswith("KRW-") and mk[4:] not in m:
+                        m[mk[4:]]=x.get("korean_name","")
+        except Exception as e:
+            print(f"[krname] {url[:30]} 실패: {e}")
+    return m
 
 KOR_NAMES = {}  # main에서 채움
 
@@ -125,7 +126,11 @@ def detect_qty_bot(d):
     top_qty, top_cnt = None, 0
     for q,c in ranked:
         if c<QTY_REP_MIN: break
+        # 소수점 봇 = 4회+ (우연 불가) / 정수 봇 = INT_QTY_MIN회+ (우연 가능하니 높은 벽)
+        # ★ SIGN 교훈: 833개×67회 같은 정수 고빈도 봇도 세력 (사람 불가)
         if is_bot_qty(q):
+            top_qty, top_cnt = q, c; break
+        elif c >= INT_QTY_MIN:   # 정수라도 압도적 반복이면 봇
             top_qty, top_cnt = q, c; break
     if top_qty is None: return None
     if top_cnt<QTY_REP_MIN or top_cnt/n<QTY_RATIO_MIN: return None
@@ -184,21 +189,46 @@ def main():
 
     msgs=[]
     # [알람1] 매집 포착 — 이번에 새로 생긴 봇 (이전에 없던 종목)
+    # ★ KAT 교훈: 봇 흡수 + 가격 동반 여부로 매집/발사 갈림
+    #   - 가격 박제 = 매집 중 (받아먹는 중, 발사 아님)
+    #   - 가격 +PRICE_FIRE%↑ 동반 = 발사 (다 모으고 위로 사올림)
     for key,b in cur_bots.items():
         exch=b.get('exch','업비트'); sym=b.get('sym',key.split('|')[-1])
-        nkey=f"{exch}|{sym}|{b['label']}"  # 거래소+종목+방향
+        emoji='🟢' if b['label']=='매집' else ('🔴' if b['label']=='분배' else '⚪')
+        nb=b.get('net_buy',0); pxc=b.get('px_chg',0)
+
+        # 발사 판정 — 매집봇인데 가격이 위로 동반 (분배/중립 제외)
+        is_fire = (b['label']=='매집' and pxc >= PRICE_FIRE)
+        if is_fire:
+            fkey=f"{exch}|{sym}|발사"
+            if fkey not in notified:
+                notified.add(fkey)
+                msg=(f"🚀 <b>발사 신호 [{exch}]</b>\n"
+                     f"─────────────\n"
+                     f"▶ <b>{kname(sym)}</b>\n"
+                     f"━━ 매집봇 + 가격 동반 상승 ━━\n"
+                     f"• 가격 {pxc:+.1f}% (윈도우내)\n"
+                     f"• 수량고정 {b['qty']:g}개 × {b['cnt']}회\n"
+                     f"• 방향 매집 {b['dirpct']*100:.0f}% / 순매수 {nb/10000:+.0f}만\n"
+                     f"• 최근 {b['last_seen']}\n"
+                     f"─────────────\n"
+                     f"🎯 매집세력 <b>위로 사올림</b> = 발사 진입")
+                msgs.append(('발사',sym,msg,b))
+            continue  # 발사면 매집중 알람 생략
+
+        # 매집중/분배/중립 포착 (종목+방향당 1회)
+        nkey=f"{exch}|{sym}|{b['label']}"
         if nkey not in notified:
             notified.add(nkey)
-            emoji='🟢' if b['label']=='매집' else ('🔴' if b['label']=='분배' else '⚪')
-            nb=b.get('net_buy',0)
-            msg=(f"{emoji} <b>{b['label']}봇 포착 [{exch}]</b>\n"
+            phase = "매집 중" if b['label']=='매집' else b['label']
+            msg=(f"{emoji} <b>{phase} [{exch}]</b>\n"
                  f"─────────────\n"
                  f"▶ <b>{kname(sym)}</b>\n"
                  f"━━ 수량고정 {b['qty']:g}개 ━━\n"
                  f"• 반복 {b['cnt']}회 (비율 {b['ratio']*100:.0f}%)\n"
                  f"• 방향 {b['label']} {b['dirpct']*100:.0f}%\n"
                  f"• 건당 {b['avg_amt']/10000:.0f}만원\n"
-                 f"• 순매수 {nb/10000:+.0f}만\n"
+                 f"• 순매수 {nb/10000:+.0f}만 / 가격 {pxc:+.1f}%\n"
                  f"• 간격 {b['med_gap']:.0f}초 / 최근 {b['last_seen']}\n"
                  f"─────────────")
             msgs.append(('포착',sym,msg,b))
@@ -210,15 +240,14 @@ def main():
             prev_n=pb.get('n_recent',0); now_n=recent_count.get(key,0)
             dead = (prev_n>0 and now_n < prev_n*DEAD_DROP)
             if pb.get('label')=='매집' and dead:
-                msg=(f"⚠️ <b>매집 종료 — 표류 시작 [{exch}]</b>\n"
+                msg=(f"⚪ <b>매집봇 멈춤 (표류 후보) [{exch}]</b>\n"
                      f"─────────────\n"
                      f"▶ <b>{kname(sym)}</b>\n"
-                     f"━━ 매집봇 멈춤 ━━\n"
-                     f"• 직전 {pb['qty']:g}개×{pb['cnt']}회 → 사라짐\n"
-                     f"• 거래 급감 {prev_n}→{now_n}건 ({now_n/max(1,prev_n)*100:.0f}%)\n"
+                     f"━━ 봇 일시 사라짐 ━━\n"
+                     f"• 직전 {pb['qty']:g}개×{pb['cnt']}회 → 안보임\n"
+                     f"• 거래 {prev_n}→{now_n}건 ({now_n/max(1,prev_n)*100:.0f}%)\n"
                      f"─────────────\n"
-                     f"🎯 ID패턴상 <b>신호 선행 자리</b>\n"
-                     f"(매집끝→표류→약1h뒤 발사)")
+                     f"※ 잠깐 멈춤일 수 있음(KAT형). 재개/발사 지켜볼것")
                 msgs.append(('종료',sym,msg,pb))
 
     # 발송 + state 갱신
