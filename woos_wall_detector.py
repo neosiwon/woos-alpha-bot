@@ -68,6 +68,7 @@ def kname(sym):
     return f"{kn}({sym})" if kn else sym
 
 def send_telegram(token, chat_id, text):
+    return True  # NOTIFY_DISABLED: 5분 개별알람 차단 (누적알람으로 통일). pattern.csv 기록은 유지.
     if not token or not chat_id: return False
     try:
         url=f"https://api.telegram.org/bot{token}/sendMessage"
