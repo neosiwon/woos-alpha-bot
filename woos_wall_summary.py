@@ -31,12 +31,15 @@ def send_telegram(token, chat_id, text):
 
 KOR={}
 def load_korean_names():
-    try:
-        with urllib.request.urlopen("https://api.upbit.com/v1/market/all?isDetails=false",timeout=10) as r:
-            for x in json.loads(r.read().decode()):
-                mk=x.get("market","")
-                if mk.startswith("KRW-"): KOR[mk[4:]]=x.get("korean_name","")
-    except: pass
+    for url in ("https://api.upbit.com/v1/market/all?isDetails=false",
+                "https://api.bithumb.com/v1/market/all?isDetails=false"):
+        try:
+            with urllib.request.urlopen(url,timeout=10) as r:
+                for x in json.loads(r.read().decode()):
+                    mk=x.get("market","")
+                    if mk.startswith("KRW-") and mk[4:] not in KOR:
+                        KOR[mk[4:]]=x.get("korean_name","")
+        except: pass
 def kn(s): return f"{KOR.get(s)}({s})" if KOR.get(s) else s
 
 def main():

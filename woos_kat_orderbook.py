@@ -17,6 +17,8 @@ ENV_PATH = os.path.expanduser("~/woos-alpha-bot/.env")
 
 POLL_SEC = 30          # 30초마다 오더북
 WALL_DROP = 0.5        # 매도벽이 직전의 50% 미만으로 줄면 '소멸'
+BID_SURGE = 1.8        # 매수벽이 직전의 1.8배+ 되면 '급증'(받침강화)
+BID_DROP  = 0.5        # 매수벽이 직전의 50% 미만 되면 '소멸'(받침빠짐)
 PRICE_JUMP = 0.02      # 가격 2%+ 오르면 발사로 보고 종료
 MAX_MIN = 120          # 최대 2시간 감시
 ASK_LEVELS = 5         # 현재가 위 5단까지를 '매도벽'으로
@@ -57,6 +59,7 @@ def main():
     send_telegram(token,chat,f"👁 <b>[{SYM}] 오더북 감시 시작</b>\n표류 진입 → 발사 방아쇠(매도벽 소멸) 추적")
 
     prev_ask_wall=None
+    prev_bid_wall=None
     start=time.time()
     first_price=None
     while time.time()-start < MAX_MIN*60:
@@ -74,12 +77,29 @@ def main():
         if first_price is None: first_price=cur_ask
         print(f"[{now}] 매도벽 {ask_wall:,.0f} / 매수벽 {bid_wall:,.0f} (비율 {ratio:.2f}) 현재 {cur_bid}~{cur_ask}", flush=True)
 
-        # 발사 방아쇠 — 매도벽 소멸
+        # 발사 방아쇠 — 매도벽 소멸 (위가 뚫림)
         if prev_ask_wall and ask_wall < prev_ask_wall*WALL_DROP:
             msg=(f"🚀 <b>[{SYM}] 매도벽 소멸 — 발사 방아쇠</b>\n"
-                 f"매도벽 {prev_ask_wall:,.0f} → {ask_wall:,.0f} ({ask_wall/prev_ask_wall*100:.0f}%)\n"
-                 f"현재가 {cur_ask}원\n"
-                 f"★세력이 누르던 벽 거둠 = 급등 임박")
+                 f"─────────────\n"
+                 f"• 매도벽 {prev_ask_wall:,.0f} → {ask_wall:,.0f} ({ask_wall/prev_ask_wall*100:.0f}%)\n"
+                 f"• 현재가 {cur_ask}원\n"
+                 f"🎯 세력이 누르던 벽 거둠 = 급등 임박")
+            send_telegram(token,chat,msg); print(msg,flush=True)
+        # 매수벽 급증 (받침 강화 = 발사 준비?)
+        if prev_bid_wall and bid_wall > prev_bid_wall*BID_SURGE:
+            msg=(f"🟢 <b>[{SYM}] 매수벽 급증 — 받침 강화</b>\n"
+                 f"─────────────\n"
+                 f"• 매수벽 {prev_bid_wall:,.0f} → {bid_wall:,.0f} ({bid_wall/prev_bid_wall:.1f}배)\n"
+                 f"• 현재가 {cur_bid}원\n"
+                 f"🎯 세력 받침 강화 = 발사 준비?")
+            send_telegram(token,chat,msg); print(msg,flush=True)
+        # 매수벽 소멸 (받침 빠짐 = 하락 위험)
+        if prev_bid_wall and bid_wall < prev_bid_wall*BID_DROP:
+            msg=(f"🔻 <b>[{SYM}] 매수벽 소멸 — 받침 빠짐</b>\n"
+                 f"─────────────\n"
+                 f"• 매수벽 {prev_bid_wall:,.0f} → {bid_wall:,.0f} ({bid_wall/prev_bid_wall*100:.0f}%)\n"
+                 f"• 현재가 {cur_bid}원\n"
+                 f"⚠️ 받침 빠짐 = 하락 위험")
             send_telegram(token,chat,msg); print(msg,flush=True)
 
         # 가격 급등 = 발사 확인 → 종료
@@ -88,6 +108,7 @@ def main():
             send_telegram(token,chat,msg); print(msg,flush=True)
             break
         prev_ask_wall=ask_wall
+        prev_bid_wall=bid_wall
         time.sleep(POLL_SEC)
     print(f"=== {SYM} 감시 종료 ===", flush=True)
 
