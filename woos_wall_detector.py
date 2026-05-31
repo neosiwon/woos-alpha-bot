@@ -160,29 +160,37 @@ def main():
     today=datetime.now().strftime('%Y%m%d')
     if state.get('notified_date')!=today: notified=set()  # 날짜 바뀌면 초기화
 
-    files=[os.path.join(LOG_DIR,f"tick_{sys.argv[1]}.csv.gz")] if len(sys.argv)>1 else \
-          sorted([os.path.join(LOG_DIR,f) for f in os.listdir(LOG_DIR)
-                  if f.startswith("tick_") and f.endswith(".csv.gz") and "_7col" not in f])[-1:]
+    # 업비트 + 빗썸 단독, 둘 다 (오늘 파일)
+    today_str=datetime.now().strftime("%Y%m%d")
+    files=[]
+    upf=os.path.join(LOG_DIR,f"tick_{today_str}.csv.gz")
+    btf=os.path.join(LOG_DIR,f"tick_bithumb_{today_str}.csv.gz")
+    if os.path.exists(upf): files.append(("업비트",upf))
+    if os.path.exists(btf): files.append(("빗썸",btf))
 
-    cur_bots={}      # 이번 회차 활성봇
-    recent_count={}  # 종목별 최근 윈도우 체결수 (거래급감 판정용)
-    for path in files:
+    cur_bots={}      # 이번 회차 활성봇 {거래소|종목: res}
+    recent_count={}  # {거래소|종목: 체결수}
+    for exch,path in files:
         if not os.path.exists(path): continue
         rows,last_t=load_recent_ticks(path, WINDOW_MIN)
         for sym,d in rows.items():
             if sym in STABLE or sym in SKIP_MAJOR: continue
-            recent_count[sym]=len(d)
+            key=f"{exch}|{sym}"
+            recent_count[key]=len(d)
             res=detect_qty_bot(d)
-            if res: cur_bots[sym]=res
+            if res:
+                res['exch']=exch; res['sym']=sym
+                cur_bots[key]=res
 
     msgs=[]
     # [알람1] 매집 포착 — 이번에 새로 생긴 봇 (이전에 없던 종목)
-    for sym,b in cur_bots.items():
-        nkey=f"{sym}|{b['label']}"  # 종목+방향 (중립→매집 전환시 재알림)
+    for key,b in cur_bots.items():
+        exch=b.get('exch','업비트'); sym=b.get('sym',key.split('|')[-1])
+        nkey=f"{exch}|{sym}|{b['label']}"  # 거래소+종목+방향
         if nkey not in notified:
             notified.add(nkey)
             emoji='🟢' if b['label']=='매집' else ('🔴' if b['label']=='분배' else '⚪')
-            msg=(f"{emoji} <b>{b['label']} 봇 포착</b>\n"
+            msg=(f"{emoji} <b>[{exch}] {b['label']} 봇 포착</b>\n"
                  f"종목: <b>{kname(sym)}</b>\n"
                  f"수량고정: {b['qty']:g}개 × {b['cnt']}회 ({b['ratio']*100:.0f}%)\n"
                  f"방향: {b['label']} ({b['dirpct']*100:.0f}%) / 평균 {b['avg_amt']:,.0f}원\n"
@@ -190,13 +198,13 @@ def main():
             msgs.append(('포착',sym,msg,b))
 
     # [알람2] 매집 종료 — 직전엔 있었는데 이번에 사라진 봇 + 거래급감
-    for sym,pb in prev_bots.items():
-        if sym not in cur_bots:
-            # 거래 급감 확인
-            prev_n=pb.get('n_recent',0); now_n=recent_count.get(sym,0)
+    for key,pb in prev_bots.items():
+        if key not in cur_bots:
+            exch=pb.get('exch','업비트'); sym=pb.get('sym',key.split('|')[-1])
+            prev_n=pb.get('n_recent',0); now_n=recent_count.get(key,0)
             dead = (prev_n>0 and now_n < prev_n*DEAD_DROP)
             if pb.get('label')=='매집' and dead:
-                msg=(f"⚠️ <b>매집 종료 — 표류 시작</b>\n"
+                msg=(f"⚠️ <b>[{exch}] 매집 종료 — 표류 시작</b>\n"
                      f"종목: <b>{kname(sym)}</b>\n"
                      f"매집봇 멈춤 (직전 {pb['qty']:g}개×{pb['cnt']}회 → 사라짐)\n"
                      f"거래 급감: {prev_n} → {now_n}건 ({now_n/max(1,prev_n)*100:.0f}%)\n"
@@ -209,22 +217,22 @@ def main():
     write_hdr = not os.path.exists(pat_path)
     pf=open(pat_path,'a')
     if write_hdr:
-        pf.write("시각,종목,종류,라벨,수량,횟수,비율,방향쏠림,평균금액,간격초,순매수만\n")
+        pf.write("시각,종목,종류,라벨,수량,횟수,비율,방향쏠림,평균금액,간격초,순매수만,거래소\n")
     now_hm=datetime.now().strftime("%H:%M")
 
     # (1) 이번 회차 잡힌 봇 전체 기록 (알람 여부 무관 — 요약용)
-    for sym,b in cur_bots.items():
-        nb=b.get('net_buy',0)
-        pf.write("%s,%s,%s,%s,%g,%d,%.2f,%.2f,%.0f,%.0f,%.0f\n" % (
-            now_hm, sym, '활동', b.get('label',''), b.get('qty',0), b.get('cnt',0),
-            b.get('ratio',0), b.get('dirpct',0), b.get('avg_amt',0), b.get('med_gap',0), nb/10000))
+    for key,b in cur_bots.items():
+        nb=b.get('net_buy',0); exch=b.get('exch','')
+        pf.write("%s,%s,%s,%s,%g,%d,%.2f,%.2f,%.0f,%.0f,%.0f,%s\n" % (
+            now_hm, b.get('sym',key), '활동', b.get('label',''), b.get('qty',0), b.get('cnt',0),
+            b.get('ratio',0), b.get('dirpct',0), b.get('avg_amt',0), b.get('med_gap',0), nb/10000, exch))
     # (2) 알람(포착/종료) — dedup 적용된 것만, 텔레그램 발송 + 기록
     for kind,sym,msg,b in msgs:
         ok=send_telegram(token,chat,msg)
-        nb=b.get('net_buy',0)
-        pf.write("%s,%s,%s,%s,%g,%d,%.2f,%.2f,%.0f,%.0f,%.0f\n" % (
-            now_hm, sym, kind, b.get('label',''), b.get('qty',0), b.get('cnt',0),
-            b.get('ratio',0), b.get('dirpct',0), b.get('avg_amt',0), b.get('med_gap',0), nb/10000))
+        nb=b.get('net_buy',0); exch=b.get('exch','')
+        pf.write("%s,%s,%s,%s,%g,%d,%.2f,%.2f,%.0f,%.0f,%.0f,%s\n" % (
+            now_hm, b.get('sym',sym), kind, b.get('label',''), b.get('qty',0), b.get('cnt',0),
+            b.get('ratio',0), b.get('dirpct',0), b.get('avg_amt',0), b.get('med_gap',0), nb/10000, exch))
         print(f"[{kind}] {sym} {b.get('label','')} qty{b.get('qty')} 발송{'OK' if ok else 'X'}")
     pf.close()
     state['active_bots']=cur_bots
@@ -234,8 +242,8 @@ def main():
     save_state(state)
 
     print(f"\n수량고정봇 {len(cur_bots)}개 활성 / 알람 {len(msgs)}건 (chat={chat}, token={'O' if token else 'X'})")
-    for sym,b in sorted(cur_bots.items(), key=lambda x:-x[1]['ratio']):
-        print(f"  {sym:8} {b['label']} {b['qty']:g}개×{b['cnt']}회 ({b['ratio']*100:.0f}%) {b['dirpct']*100:.0f}% 간격{b['med_gap']:.0f}s")
+    for key,b in sorted(cur_bots.items(), key=lambda x:-x[1]['ratio']):
+        print(f"  [{b.get('exch','')}] {b.get('sym',key):8} {b['label']} {b['qty']:g}개×{b['cnt']}회 ({b['ratio']*100:.0f}%) {b['dirpct']*100:.0f}% 간격{b['med_gap']:.0f}s")
 
 if __name__=="__main__":
     main()

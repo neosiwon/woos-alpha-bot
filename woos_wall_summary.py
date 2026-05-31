@@ -65,7 +65,7 @@ def main():
         rows=[]
 
     # 종목별 최신 상태 집계 (같은 종목 여러번이면 최신 + 포착/종료 카운트)
-    sym_data=collections.defaultdict(lambda: {'포착':0,'종료':0,'라벨':'','수량':'','횟수':0,'평균금액':0,'순매수':0,'마지막':''})
+    sym_data=collections.defaultdict(lambda: {'포착':0,'종료':0,'라벨':'','수량':'','횟수':0,'평균금액':0,'순매수':0,'마지막':'','거래소':''})
     for x in rows:
         sym=x['종목']; d=sym_data[sym]
         kind=x.get('종류',''); 
@@ -79,6 +79,7 @@ def main():
         try: d['평균금액']=float(x.get('평균금액',0))
         except: pass
         d['마지막']=x.get('시각','')
+        d['거래소']=x.get('거래소','')
 
     매집={s:d for s,d in sym_data.items() if d['라벨']=='매집'}
     분배={s:d for s,d in sym_data.items() if d['라벨']=='분배'}
@@ -94,11 +95,13 @@ def main():
     if 매집:
         lines.append(f"🟢 <b>매집 {len(매집)}종목</b> (순매수순)")
         for s,d in sorted(매집.items(), key=lambda x:-x[1]['순매수'])[:10]:
-            lines.append(f"  {kn(s)}  {d['수량']}개×{d['횟수']}회 (건당{d['평균금액']/10000:.0f}만) 순{d['순매수']:+.0f}만")
+            ex=f"[{d['거래소']}] " if d['거래소'] else ""
+            lines.append(f"  {ex}{kn(s)}  {d['수량']}개×{d['횟수']}회 (건당{d['평균금액']/10000:.0f}만) 순{d['순매수']:+.0f}만")
     if 분배:
         lines.append(f"\n🔴 <b>분배 {len(분배)}종목</b>")
         for s,d in sorted(분배.items(), key=lambda x:x[1]['순매수'])[:8]:
-            lines.append(f"  {kn(s)}  {d['수량']}개×{d['횟수']}회 (건당{d['평균금액']/10000:.0f}만) 순{d['순매수']:+.0f}만")
+            ex=f"[{d['거래소']}] " if d['거래소'] else ""
+            lines.append(f"  {ex}{kn(s)}  {d['수량']}개×{d['횟수']}회 (건당{d['평균금액']/10000:.0f}만) 순{d['순매수']:+.0f}만")
     if 중립:
         lines.append(f"\n⚪ 중립 {len(중립)}: "+", ".join(kn(s) for s in list(중립)[:8]))
     if not sym_data:
