@@ -190,11 +190,17 @@ def main():
         if nkey not in notified:
             notified.add(nkey)
             emoji='🟢' if b['label']=='매집' else ('🔴' if b['label']=='분배' else '⚪')
-            msg=(f"{emoji} <b>[{exch}] {b['label']} 봇 포착</b>\n"
-                 f"종목: <b>{kname(sym)}</b>\n"
-                 f"수량고정: {b['qty']:g}개 × {b['cnt']}회 ({b['ratio']*100:.0f}%)\n"
-                 f"방향: {b['label']} ({b['dirpct']*100:.0f}%) / 평균 {b['avg_amt']:,.0f}원\n"
-                 f"간격: {b['med_gap']:.0f}초 / 최근 {b['last_seen']}")
+            nb=b.get('net_buy',0)
+            msg=(f"{emoji} <b>{b['label']}봇 포착 [{exch}]</b>\n"
+                 f"─────────────\n"
+                 f"▶ <b>{kname(sym)}</b>\n"
+                 f"━━ 수량고정 {b['qty']:g}개 ━━\n"
+                 f"• 반복 {b['cnt']}회 (비율 {b['ratio']*100:.0f}%)\n"
+                 f"• 방향 {b['label']} {b['dirpct']*100:.0f}%\n"
+                 f"• 건당 {b['avg_amt']/10000:.0f}만원\n"
+                 f"• 순매수 {nb/10000:+.0f}만\n"
+                 f"• 간격 {b['med_gap']:.0f}초 / 최근 {b['last_seen']}\n"
+                 f"─────────────")
             msgs.append(('포착',sym,msg,b))
 
     # [알람2] 매집 종료 — 직전엔 있었는데 이번에 사라진 봇 + 거래급감
@@ -204,11 +210,15 @@ def main():
             prev_n=pb.get('n_recent',0); now_n=recent_count.get(key,0)
             dead = (prev_n>0 and now_n < prev_n*DEAD_DROP)
             if pb.get('label')=='매집' and dead:
-                msg=(f"⚠️ <b>[{exch}] 매집 종료 — 표류 시작</b>\n"
-                     f"종목: <b>{kname(sym)}</b>\n"
-                     f"매집봇 멈춤 (직전 {pb['qty']:g}개×{pb['cnt']}회 → 사라짐)\n"
-                     f"거래 급감: {prev_n} → {now_n}건 ({now_n/max(1,prev_n)*100:.0f}%)\n"
-                     f"★ID패턴상 신호 선행 자리 (매집끝→표류→신호)")
+                msg=(f"⚠️ <b>매집 종료 — 표류 시작 [{exch}]</b>\n"
+                     f"─────────────\n"
+                     f"▶ <b>{kname(sym)}</b>\n"
+                     f"━━ 매집봇 멈춤 ━━\n"
+                     f"• 직전 {pb['qty']:g}개×{pb['cnt']}회 → 사라짐\n"
+                     f"• 거래 급감 {prev_n}→{now_n}건 ({now_n/max(1,prev_n)*100:.0f}%)\n"
+                     f"─────────────\n"
+                     f"🎯 ID패턴상 <b>신호 선행 자리</b>\n"
+                     f"(매집끝→표류→약1h뒤 발사)")
                 msgs.append(('종료',sym,msg,pb))
 
     # 발송 + state 갱신

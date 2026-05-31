@@ -86,27 +86,36 @@ def main():
     중립={s:d for s,d in sym_data.items() if d['라벨']=='중립'}
     종료된={s:d for s,d in sym_data.items() if d['종료']>0}
 
-    lines=[title,""]
-    if 종료된:
-        lines.append(f"⚠️ <b>매집 종료 {len(종료된)}종목</b> (표류=신호후보)")
-        for s,d in sorted(종료된.items(), key=lambda x:-abs(x[1]['순매수'])):
-            lines.append(f"  {kn(s)}  {d['마지막']} 종료")
-        lines.append("")
-    if 매집:
-        lines.append(f"🟢 <b>매집 {len(매집)}종목</b> (순매수순)")
-        for s,d in sorted(매집.items(), key=lambda x:-x[1]['순매수'])[:10]:
-            ex=f"[{d['거래소']}] " if d['거래소'] else ""
-            lines.append(f"  {ex}{kn(s)}  {d['수량']}개×{d['횟수']}회 (건당{d['평균금액']/10000:.0f}만) 순{d['순매수']:+.0f}만")
-    if 분배:
-        lines.append(f"\n🔴 <b>분배 {len(분배)}종목</b>")
-        for s,d in sorted(분배.items(), key=lambda x:x[1]['순매수'])[:8]:
-            ex=f"[{d['거래소']}] " if d['거래소'] else ""
-            lines.append(f"  {ex}{kn(s)}  {d['수량']}개×{d['횟수']}회 (건당{d['평균금액']/10000:.0f}만) 순{d['순매수']:+.0f}만")
+    # 순위: 매집=순매수 큰 순, 분배=순매도 큰 순 (절댓값)
+    매집_s=sorted(매집.items(), key=lambda x:-x[1]['순매수'])
+    분배_s=sorted(분배.items(), key=lambda x:x[1]['순매수'])
+    종료_s=sorted(종료된.items(), key=lambda x:-abs(x[1]['순매수']))
+
+    lines=[title,"─────────────"]
+    if 종료_s:
+        lines.append(f"🎯 <b>매집종료 {len(종료_s)}</b> (표류=신호후보)")
+        for i,(sym,d) in enumerate(종료_s,1):
+            ex=f"[{d['거래소']}]" if d['거래소'] else ""
+            lines.append(f"{i}. {ex} <b>{kn(sym)}</b>  {d['마지막']}")
+        lines.append("─────────────")
+    if 매집_s:
+        lines.append(f"🟢 <b>매집 {len(매집_s)}</b> (순매수순)")
+        for i,(sym,d) in enumerate(매집_s[:10],1):
+            ex=f"[{d['거래소']}]" if d['거래소'] else ""
+            lines.append(f"{i}. {ex} <b>{kn(sym)}</b>")
+            lines.append(f"   {d['수량']}개×{d['횟수']}회 건당{d['평균금액']/10000:.0f}만 순{d['순매수']:+.0f}만")
+        lines.append("─────────────")
+    if 분배_s:
+        lines.append(f"🔴 <b>분배 {len(분배_s)}</b> (순매도순)")
+        for i,(sym,d) in enumerate(분배_s[:8],1):
+            ex=f"[{d['거래소']}]" if d['거래소'] else ""
+            lines.append(f"{i}. {ex} <b>{kn(sym)}</b>")
+            lines.append(f"   {d['수량']}개×{d['횟수']}회 건당{d['평균금액']/10000:.0f}만 순{d['순매수']:+.0f}만")
+        lines.append("─────────────")
     if 중립:
-        lines.append(f"\n⚪ 중립 {len(중립)}: "+", ".join(kn(s) for s in list(중립)[:8]))
+        lines.append(f"⚪ 중립 {len(중립)}: "+", ".join(kn(s) for s in list(중립)[:8]))
     if not sym_data:
         lines.append("(이 시간대 봇 활동 없음)")
-
     msg="\n".join(lines)
     ok=send_telegram(token,chat,msg)
     print(msg)
