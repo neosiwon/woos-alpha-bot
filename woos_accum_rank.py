@@ -33,6 +33,8 @@ def load_env():
     return env
 
 def send_telegram(token, chat, text):
+    if os.environ.get('ACCUM_NOTIFY','off')!='on':
+        print('[muted]'); return True  # 모니터 발송 차단(복구: 환경변수 ACCUM_NOTIFY=on)
     if not token or not chat: return False
     try:
         url=f"https://api.telegram.org/bot{token}/sendMessage"
