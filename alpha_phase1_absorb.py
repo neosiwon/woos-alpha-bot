@@ -1,10 +1,34 @@
 #!/usr/bin/env python3
-# alpha_phase1_absorb.py — Phase 1: 흡수 매집 후보군 (일별집계 json 합산)
-# 데이터: daily_agg_YYYYMMDD.json 합산 (통파일 안 읽음, 빠름, 뭉개짐 0 검증)
-# 3조건 AND: ①순수매집장악≥1% ②매도우위≥48% ③폭락아님(등락≥-30%&흡수율≥0.25)
+# alpha_phase1_absorb.py — Phase 1: 흡수 매집 후보군 (A형, 다일 누적)
+# ============================================================
+# 데이터: daily_agg_YYYYMMDD.json 합산 (통파일 안읽음·빠름·뭉개짐0 검증)
+#
+# 세력 플레이북(검증): 세력은 물량(수량)을 모음 → 매도벽 가두리 → 개미 물량 흡수
+#   → 순매도 넘치는데 가격 유지 = 흡수의 지문
+#
+# Phase 1 = 3조건 AND (등급 아님, A형 흡수만):
+#   ① 순수매집 장악률 ≥ 1% (자전 양방향봇 제거 후 / 빗썸 내부유통량) ← 주 변별자
+#      ※유통량 대비 비율이라 가격대 정규화됨 (절대값 함정 회피)
+#   ② 매도우위 ≥ 48% (개미 던짐 = 흡수 대상)
+#   ③ 폭락 아님 (누적등락 ≥ -30% AND 흡수율 ≥ 0.25, NEAR -39% 제외)
+#
+# 검증(다일): 발사 OSMO7.9·ALLO20·EDEN10.4·HOME24.7 통과 /
+#   비발사 ATOM0.1·QTUM0.3·XLM(장악1.1%)·NEAR(폭락) 탈락
+#
+# ※기각: 당일장악(후행, 발사前0~3%) / 호가잠식(비발사도 많음) / 자전종수(XLM대형 노이즈)
+# ※B형(DAO·JTO, 변곡점/당일발사, 다일흡수 약함)은 Phase2에서 처리
+# ※발사 트리거(호가 가두리풀림)는 Phase2 (체결 자전은 발사직전 희박, 호가에 선명)
+#
+# 속도: 봇 있는 전종목 → ①매도우위 ②폭락 ③금액1.5억 1차컷(API없음) → 통과만 유통량 API
+# 주기: 매시간. 시퀀스: VWAP -3% 안깨진 구간 (최대 14일)
+# ============================================================
 
 import os, json, collections, urllib.request, urllib.parse
 from datetime import datetime, timedelta
+try:
+    import alpha_smc  # SMC 시퀀스 모듈 (같은 디렉토리)
+    SMC_OK=True
+except: SMC_OK=False
 
 LOG_DIR    = os.path.expanduser("~/woos_logs")
 ENV_PATH   = os.path.expanduser("~/woos-alpha-bot/.env")
@@ -14,6 +38,9 @@ CACHE_PATH = os.path.join(LOG_DIR, "alpha_cache.json")
 PURE_GRIP_MIN=1.0; SELL_DOM_MIN=48.0; PRICE_CRASH=-30.0; ABSORB_MIN=0.25
 ACCUM_CUT_EOK=1.5  # 유통량 API 전 1차 컷: 순수매집 금액(억). 검증: JTO2.7·OSMO6.3·DAO2.8 통과
 DUMP_DROP_PCT=3.0; MAX_SEQ_DAYS=14; BIDIR_MIN=3; DEC_MIN,INT_MIN=4,40
+USE_SMC=True      # SMC 시퀀스 필터: 덤핑(bear CHoCH+BOS연속) 사이클 제외
+SMC_UNIT=60       # 1시간봉 (시퀀스 경계용, 후행이지만 사이클엔 적합)
+SMC_BOS_DUMP=2    # bear CHoCH 후 bear BOS 이 횟수+ = 덤핑 진행 = 제외
 UA={"User-Agent":"Mozilla/5.0","Referer":"https://www.bithumb.com/","Accept":"application/json"}
 
 def load_env():
@@ -124,24 +151,15 @@ def save_state(st):
     except Exception as e: print(f"[state] {e}")
 
 def main():
-    import time as _T, sys as _S
-    def _log(msg):
-        print(f"[{_T.time()%1000:.1f}] {msg}", flush=True)
-    _log("main 시작")
     env=load_env(); token=env.get('TELEGRAM_BOT_TOKEN'); chat=env.get('TELEGRAM_CHAT_ID_MONITOR')
-    _log("env 로드 완료")
     load_korean_names()
-    _log("한국어이름 로드 완료")
     cache=load_cache(); state=load_state(); watch=state.get("watch",{})
     now_hm=datetime.now().strftime("%H:%M")
-    _log("cache/state 로드 완료, merge 시작")
     data,seq=load_and_merge()
-    _log("merge 완료")
     if data is None:
         print("[info] daily_agg json 없음 — alpha_daily_agg.py로 먼저 생성"); return
     merged,cum=data
-    # 1단계: API 없이 거름
-    _log(f"1단계 시작 (종목 {len(merged)})")
+    # 1단계: API 없이 ②매도우위 ③폭락 + 금액컷으로 먼저 거름 (빠름)
     locals_={}
     for sym in merged:
         m=compute_local(sym,merged[sym],cum[sym])
@@ -163,9 +181,18 @@ def main():
         m["pure_grip"]=m["pure_buy"]/camt*100
         cur[sym]=m
         if m["pure_grip"]<PURE_GRIP_MIN: continue
+        # SMC 시퀀스 필터: 덤핑 진행(bear CHoCH+BOS연속) 종목 제외
+        if USE_SMC and SMC_OK:
+            sm=alpha_smc.smc(sym, SMC_UNIT)
+            if sm:
+                m["smc_cycle"]=sm["cycle"]; m["smc_zone"]=sm["zone"]; m["smc_choch"]=sm["last_choch"]
+                # 덤핑 진행 = bear 사이클 + bear BOS 연속 → 흡수 후보 아님
+                if sm["cycle"]=="bear" and sm["bos_after"]>=SMC_BOS_DUMP:
+                    print(f"  [SMC제외] {sym} 덤핑진행 (bear CHoCH+BOS{sm['bos_after']})"); continue
         if sym in watch: continue
         watch[sym]={"since":now_hm,"seq":seq,"pure_grip":round(m["pure_grip"],1),
-                    "vwap":round(m["vwap"],4),"entry_px":m["px"]}
+                    "vwap":round(m["vwap"],4),"entry_px":m["px"],
+                    "smc":m.get("smc_cycle","?")}
         new_signals.append((sym,m))
     # 관찰 해제: 관찰중 종목만 유통량 확인 (이미 cur에 있거나 추가 호출)
     removed=[]
@@ -177,14 +204,26 @@ def main():
             camt=internal_supply(sym,cache)
             if not camt: continue
             ml["pure_grip"]=ml["pure_buy"]/camt*100; m=ml
-        if m["vwap_gap"]<=-DUMP_DROP_PCT or m["pure_grip"]<PURE_GRIP_MIN:
-            removed.append((sym,watch[sym].get("pure_grip",0),round(m["pure_grip"],1))); del watch[sym]
+        w=watch[sym]
+        # 발사 이력 갱신: VWAP +LAUNCH(5%) 한번이라도 넘었으면 launched=True
+        if m["vwap_gap"]>=5.0: w["launched"]=True
+        # 해제 사유:
+        #   ① 순수매집 소멸 (<1%) = 매집 끝
+        #   ② '발사한 적 있고(launched)' 그 후 VWAP -3% = 진짜 덤핑(털기)
+        # ※발사 전 흡수(VWAP 아래)는 해제 안 함 — 흡수 중이니 정상
+        dump = w.get("launched") and m["vwap_gap"]<=-DUMP_DROP_PCT
+        if m["pure_grip"]<PURE_GRIP_MIN or dump:
+            removed.append((sym,w.get("pure_grip",0),round(m["pure_grip"],1))); del watch[sym]
     if new_signals:
         lines=[f"🔍 <b>[흡수 매집 포착]</b> 빗썸  🕐{now_hm}", f"시퀀스 {seq} 누적 · 3조건 충족\n"]
         for sym,m in sorted(new_signals,key=lambda x:-x[1]["pure_grip"]):
             lines.append(f"▶️ <b>{kn(sym)}</b> | 순수매집 {m['pure_grip']:.1f}% (자전제외)")
-            lines.append(f"   매도우위 {m['sell_dom']:.0f}% · 누적등락 {m['chg']:+.0f}% · 흡수율 {m['absorb_rate']:.2f} · {m['px']:g}원")
+            ar = f"흡수율 {m['absorb_rate']:.2f}" if m['absorb_rate']<99 else "상승중(흡수완료?)"
+            lines.append(f"   매도우위 {m['sell_dom']:.0f}% · 누적등락 {m['chg']:+.0f}% · {ar} · {m['px']:g}원")
             lines.append(f"   VWAP(세력평단) {m['vwap']:.4g} (현재 {m['vwap_gap']:+.1f}%)")
+            if m.get("smc_cycle"):
+                ch=f"{m['smc_choch'][1]}@{m['smc_choch'][0]}" if m.get('smc_choch') else "-"
+                lines.append(f"   SMC: {m['smc_cycle']}사이클 · {m.get('smc_zone','?')} · 전환 {ch}")
         lines.append("\n→ Phase2(매수벽/변곡점) 발사 트리거 대기")
         send_telegram(token,chat,"\n".join(lines)); print("\n".join(lines),"\n")
     else:
