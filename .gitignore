@@ -145,3 +145,4 @@ state.json
 tracking.json
 signals_log.csv
 dominance.json
+.env
