@@ -253,6 +253,15 @@ def suppression_frac(sym):
     return sum(1 for _, w, _ in dq if w < WALL_SUPPRESS) / len(dq)
 
 
+def _html_escape(msg):
+    # escape &, <, > but keep our only intended tag <b>...</b>
+    msg = msg.replace("&", "&amp;")
+    msg = msg.replace("<b>", "\x00B\x00").replace("</b>", "\x00b\x00")
+    msg = msg.replace("<", "&lt;").replace(">", "&gt;")
+    msg = msg.replace("\x00B\x00", "<b>").replace("\x00b\x00", "</b>")
+    return msg
+
+
 def send_telegram(msg):
     token = ENV.get("TELEGRAM_BOT_TOKEN")
     chat = (ENV.get("TELEGRAM_CHAT_ID_GROUP") or ENV.get("TELEGRAM_CHAT_ID_PRIVATE")
@@ -262,7 +271,7 @@ def send_telegram(msg):
         return
     try:
         url = "https://api.telegram.org/bot%s/sendMessage" % token
-        data = urllib.parse.urlencode({"chat_id": chat, "text": msg,
+        data = urllib.parse.urlencode({"chat_id": chat, "text": _html_escape(msg),
                                        "parse_mode": "HTML"}).encode()
         urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=10)
     except Exception as e:
@@ -277,7 +286,7 @@ def msg_stage1(sym, sf, tpm, wall, ask):
     L.append("\uc885\ubaa9: <b>%s</b>" % kn(sym))
     L.append("== A\ud615 \ub9e4\uc9d1 \ud6c4\ubcf4 ==")
     L.append("")
-    L.append("- \uc5b5\ub20c\ub9bc %.0f%% (2h \uc9c0\uc18d, \ub9e4\uc218\ubcbd<1.0)" % (sf * 100))
+    L.append("- \uc5b5\ub20c\ub9bc %.0f%% (2h \uc9c0\uc18d, \ub9e4\uc218\ubcbd 1.0\ubbf8\ub9cc)" % (sf * 100))
     L.append("- \uac70\ub798\uc8fd\uc74c %.2f\uac74/\ubd84 (\uc778\uc704\uc801 \uc815\uc801)" % tpm)
     L.append("- \ub9e4\uc218\ubcbd\ube44\uc728 %.2f | \ub9e4\ub3c4\ubcbd %s" % (wall, format(int(ask), ",")))
     L.append("-------------")
