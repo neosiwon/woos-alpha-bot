@@ -6,7 +6,7 @@ After=network-online.target
 Type=simple
 User=neosiwon
 EnvironmentFile=/home/neosiwon/woos-alpha-bot/.env
-ExecStart=/usr/bin/python3 /home/neosiwon/woos_pinning_scanner_v3.py
+ExecStart=/usr/bin/python3 /home/neosiwon/woos_pinning_scanner_v4.py
 Restart=always
 RestartSec=10
 
